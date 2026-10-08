@@ -177,8 +177,16 @@ jobs:
           cat > "$RUNNER_TEMP/pulse-simulator.entitlements" <<'PLIST'
           <?xml version="1.0" encoding="UTF-8"?>
           <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
-          <plist version="1.0"><dict><key>application-identifier</key><string>com.pulse.work.mobile</string><key>keychain-access-groups</key><array><string>com.pulse.work.mobile</string></array><key>get-task-allow</key><true/></dict></plist>
+          <plist version="1.0"><dict><key>application-identifier</key><string>com.pulse.work.mobile</string><key>keychain-access-groups</key><array><string>com.pulse.work.mobile</string></array><key>get-task-allow</key><true/><key>com.apple.security.application-groups</key><array><string>group.com.pulse.work.mobile</string></array></dict></plist>
           PLIST
+          for extension in "$app"/PlugIns/*.appex; do
+            test -d "$extension" || continue
+            extension_id=$(/usr/libexec/PlistBuddy -c 'Print CFBundleIdentifier' "$extension/Info.plist")
+            cp "$RUNNER_TEMP/pulse-simulator.entitlements" "$RUNNER_TEMP/widget.entitlements"
+            /usr/libexec/PlistBuddy -c "Set application-identifier $extension_id" "$RUNNER_TEMP/widget.entitlements"
+            /usr/libexec/PlistBuddy -c 'Delete keychain-access-groups' "$RUNNER_TEMP/widget.entitlements"
+            codesign --force --sign - --entitlements "$RUNNER_TEMP/widget.entitlements" "$extension"
+          done
           codesign --force --sign - --entitlements "$RUNNER_TEMP/pulse-simulator.entitlements" "$app"
           echo "IPHONE_APP=$app" >> "$GITHUB_ENV"
           ditto -c -k --keepParent "$app" "$RUNNER_TEMP/pulse-ios-simulator.zip"

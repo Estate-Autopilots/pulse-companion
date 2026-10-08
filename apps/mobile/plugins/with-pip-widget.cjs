@@ -9,5 +9,9 @@ module.exports=config=>withXcodeProject(config,config=>{
  const relative=`${targetName}/Pip.xcassets`;const dir=path.join(config.modRequest.platformProjectRoot,relative,'Pip.imageset');
  fs.mkdirSync(dir,{recursive:true});fs.copyFileSync(path.join(config.modRequest.projectRoot,'assets/adaptive-icon.png'),path.join(dir,'pip.png'));
  fs.writeFileSync(path.join(dir,'Contents.json'),JSON.stringify({images:[{filename:'pip.png',idiom:'universal'}],info:{author:'xcode',version:1}}));
- project.addResourceFile(relative,{target:target[0]});return config;
+ const group=project.findPBXGroupKey({name:targetName});
+ if(!group)throw Error('Pulse widget resource group is missing');
+ const file=project.addFile('Pip.xcassets',group);
+ if(file){file.uuid=project.generateUuid();file.target=target[0];project.addToPbxBuildFileSection(file);project.addToPbxResourcesBuildPhase(file);}
+ return config;
 });

@@ -78,6 +78,7 @@
           ]
         }
       ],
+      "./plugins/with-pip-widget.cjs",
       [
         "expo-widgets",
         {
@@ -97,8 +98,7 @@
             }
           ]
         }
-      ],
-      "./plugins/with-pip-widget.cjs"
+      ]
     ],
     "extra": {
       "apiUrl": "https://pulse.estateautopilots.com/api/native/v0"
