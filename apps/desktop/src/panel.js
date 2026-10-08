@@ -24,7 +24,7 @@ const panel = mountPanel(root, {
 });
 
 const updateContext = () => ({ signedIn: !!state.session?.signedIn, demo: !!state.demo, busy: state.busy || state.installing, pending: state.queue.length > 0 || state.syncing, payload: state.payload });
-const updates = new UpdateController({ check: () => invoke('update_check', { channel: store.get('updateChannel', 'test') }), prepare: () => invoke('update_prepare'), clock: () => now(), changed: () => render() });
+const updates = new UpdateController({ check: () => invoke('update_check', { channel: store.get('updateChannel', 'test') }), prepare: () => invoke('update_prepare'), clock: () => now(), changed: () => updateUi() });
 updates.laterUntil = store.get('updateLater', 0);
 async function installUpdate() {
   if (!updates.offer(updateContext())) return;
@@ -73,8 +73,18 @@ function render() {
       tools: [{ id: 'settings', label: 'Settings', icon: 'settings' }, { id: 'close', label: `Hide (${state.info.shortcut})`, icon: 'close' }],
     });
   }
+  updateUi();
+}
+function updateUi() {
+  root.querySelector('.pc-update')?.remove();
+  const status = root.querySelector('[data-update-status]'); if (status) status.textContent = updates.status || 'Pulse checks every four hours.';
+  const check = root.querySelector('[data-update-check]'); if (check) check.disabled = updates.running || !!state.demo;
   const update = updates.offer(updateContext());
-  if (update) updateCard(state.screen === 'settings' ? root.firstElementChild : root, { update, showPip: state.prefs.mascot, onInstall: () => void installUpdate(), onLater: () => { updates.later(); store.set('updateLater', updates.laterUntil); } });
+  if (update) {
+    updateCard(state.screen === 'settings' ? root.firstElementChild : root, { update, showPip: state.prefs.mascot, onInstall: () => void installUpdate(), onLater: () => { updates.later(); store.set('updateLater', updates.laterUntil); } });
+    const announcement = `${store.get('updateChannel', 'test')}:${update.version}:${updates.laterUntil}`;
+    if (store.get('updateAnnounced', '') !== announcement) { store.set('updateAnnounced', announcement); void invoke('panel_show').catch(() => {}); }
+  }
   fit();
 }
 function tick() {
@@ -106,9 +116,11 @@ function renderSettings() {
   };
   const setPref = (key, value) => { state.prefs = prefsWith({ ...state.prefs, [key]: value }); store.set('prefs', state.prefs); };
   section('Updates');
-  const check = Object.assign(document.createElement('button'), { type: 'button', className: 'pc-btn', textContent: 'Check for updates', disabled: updates.running || !state.session?.signedIn || !!state.demo });
+  const check = Object.assign(document.createElement('button'), { type: 'button', className: 'pc-btn', textContent: 'Check for updates', disabled: updates.running || !!state.demo });
+  check.dataset.updateCheck = '';
   check.addEventListener('click', () => void updates.poll(updateContext(), true));
-  wrap.append(check, Object.assign(document.createElement('p'), { className: 'muted', textContent: updates.status || 'Pulse checks every four hours. Test channel.' }));
+  const updateStatus = Object.assign(document.createElement('p'), { className: 'muted', textContent: updates.status }); updateStatus.dataset.updateStatus = '';
+  wrap.append(check, updateStatus);
   const select = document.createElement('select'); select.setAttribute('aria-label', 'Update channel');
   for (const value of ['test', 'stable']) select.append(Object.assign(document.createElement('option'), { value, textContent: value === 'test' ? 'Test updates' : 'Stable updates' }));
   select.value = store.get('updateChannel', 'test');
@@ -155,7 +167,7 @@ function renderSettings() {
 async function refresh() {
   if (state.screen === 'connect' && !state.demo) return;
   try {
-    state.syncing = true;
+    state.syncing = true; updateUi();
     await flush();
     const p = await client().companion();
     state.payload = p; state.offset = clockOffset(p);
@@ -255,6 +267,7 @@ const connectHandlers = {
   onDemo() { state.demo = demoClient('out'); state.screen = 'day'; void refresh(); },
 };
 async function signedIn(session) {
+  updates.reset();
   state.session = session; state.demo = null; state.screen = 'day'; state.connect = { phase: 'start' };
   await refresh();
   state.status = { text: `Hello${session.personName ? `, ${session.personName.split(' ')[0]}` : ''}! You’re connected.`, tone: 'success' };
@@ -283,7 +296,7 @@ async function boot() {
   await invoke('update_healthy').catch(() => {});
   await refresh();
   void updates.poll(updateContext());
-  setInterval(() => { void updates.poll(updateContext()); render(); }, 60000);
+  setInterval(() => { void updates.poll(updateContext()); updateUi(); }, 60000);
   setInterval(tick, 1000);
   setInterval(() => { tray(); remind(); }, 30000);
   setInterval(() => void refresh(), 120000);

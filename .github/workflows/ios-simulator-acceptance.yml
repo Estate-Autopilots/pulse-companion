@@ -61,13 +61,26 @@ jobs:
           xcrun simctl io "$udid" screenshot screens/ios-start.png
           swiftc apps/mobile/scripts/ios-screen-check.swift -o "$RUNNER_TEMP/ios-screen-check"
           "$RUNNER_TEMP/ios-screen-check" screens/ios-start.png 'Sign in'
-          python3 - <<'PY'
-          import json
-          lines=['appId: com.pulse.work.mobile','---','- launchApp']
-          for state,text in [('out','Not checked in'),('in','Take a break'),('break','On a break'),('done','Done for today')]:
-            lines += ['- openLink: '+json.dumps('pulse://demo?state='+state),'- tapOn:', '    text: "^Open$"','    optional: true','- tapOn:','    text: "^Allow$"','    optional: true','- assertVisible: '+json.dumps(text),'- takeScreenshot: ios-'+state]
-          open('screens/attendance.yaml','w').write('\n'.join(lines)+'\n')
-          PY
+          cat > screens/attendance.yaml <<'FLOW'
+          appId: com.pulse.work.mobile
+          ---
+          - launchApp
+          - assertVisible: 'Try it without signing in'
+          - tapOn: 'Try it without signing in'
+          - assertVisible: 'Not checked in'
+          - takeScreenshot: ios-out
+          - tapOn: {text: '^Check in$'}
+          - assertVisible: 'Take a break'
+          - takeScreenshot: ios-in
+          - tapOn: 'Take a break'
+          - assertVisible: 'On a break'
+          - takeScreenshot: ios-break
+          - tapOn: 'I’m back'
+          - assertVisible: 'Take a break'
+          - tapOn: {text: '^Check out$'}
+          - assertVisible: 'Done for today'
+          - takeScreenshot: ios-done
+          FLOW
           maestro --device "$udid" test --test-output-dir screens --debug-output screens/maestro screens/attendance.yaml
           for s in out in break done; do
             case "$s" in out) expected='Not checked in';; in) expected='Take a break';; break) expected='On a break';; done) expected='Done for today';; esac
@@ -80,8 +93,12 @@ jobs:
           cat > screens/dark.yaml <<'FLOW'
           appId: com.pulse.work.mobile
           ---
-          - openLink: 'pulse://demo?state=in'
-          - tapOn: {text: '^Open$', optional: true}
+          - retry:
+              maxRetries: 2
+              commands:
+                - openLink: 'pulse://demo?state=in'
+                - tapOn: {text: '^Open$', optional: true}
+                - extendedWaitUntil: {visible: 'Take a break', timeout: 30000}
           - assertVisible: 'Take a break'
           - takeScreenshot: ios-in-dark
           - pressKey: Home
@@ -104,7 +121,7 @@ jobs:
           python3 - <<'PY'
           import hashlib,json,os
           r=json.load(open('screens/build-run.json'))
-          proof={'buildRun':str(r['id']),'buildCommit':r['head_sha'],'artifactName':os.environ['ARTIFACT_NAME'],'archiveSha256':hashlib.sha256(open('archive/pulse-ios-simulator.zip','rb').read()).hexdigest(),'signatureUnchanged':True,'screens':['start','out','in','break','done','in-dark'],'checks':['Xcode signature verified','Keychain startup clean','native Open confirmation accepted','all four states and dark verified'],'activityScreens':['ios-island.png','ios-lock-screen.png']}
+          proof={'buildRun':str(r['id']),'buildCommit':r['head_sha'],'artifactName':os.environ['ARTIFACT_NAME'],'archiveSha256':hashlib.sha256(open('archive/pulse-ios-simulator.zip','rb').read()).hexdigest(),'signatureUnchanged':True,'screens':['start','out','in','break','done','in-dark'],'checks':['Xcode signature verified','Keychain startup clean','all four states reached through actual attendance buttons','native Open and warm URL delivery verified','all four states and dark verified'],'activityScreens':['ios-island.png','ios-lock-screen.png']}
           open('screens/acceptance.json','w').write(json.dumps(proof,indent=2)+'\n')
           PY
       - uses: actions/upload-artifact@v7

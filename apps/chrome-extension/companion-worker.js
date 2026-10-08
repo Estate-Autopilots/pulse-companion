@@ -2,9 +2,23 @@
 // credential (two contexts rotating at once would look like a replay and sign the device out). It keeps the toolbar
 // badge current, shows reminders with a button, and finishes browser pairing even after the popup closes.
 import { actionRequest, badge, clockOffset, createClient, demoClient, dueReminders, prefsWith, verifyUrl } from './shared/index.js';
+import {UPDATE_URL,parseManifest,newer} from './shared/updates.js';
 import { companionBase, companionStore } from './companion-store.js';
 
 const ALARM = 'pulse-companion';
+const UPDATE_ALARM = 'pulse-companion-updates';
+let checkingUpdates = false;
+async function checkUpdates() {
+  if (checkingUpdates) return; checkingUpdates = true;
+  try {
+    const response = await fetch(`${UPDATE_URL}/test/latest.json`, { headers: {Accept:'application/json'}, credentials:'omit', signal:AbortSignal.timeout(30000) });
+    if (response.status === 204) { await chrome.storage.local.remove('companionUpdate'); return; }
+    if (!response.ok) throw Error('Update check failed');
+    const manifest = parseManifest(await response.json());
+    await chrome.storage.local.set({companionUpdate: {manifest,checkedAt:Date.now()}});
+  } catch { /* keep last verified metadata while offline; popup can check again */ }
+  finally { checkingUpdates = false; }
+}
 const TONE = { success: '#328267', info: '#4167cf', warning: '#9a6209', neutral: '#66687e' };
 const ACTION_LABEL = { 'check-in': 'Check in', 'break-start': 'Take a break', 'break-end': 'I’m back', 'check-out': 'Check out' };
 const version = chrome.runtime.getManifest().version;
@@ -27,7 +41,9 @@ async function setBadge(b) {
   await chrome.action.setBadgeText({ text: b?.text ?? '' });
   await chrome.action.setBadgeBackgroundColor({ color: TONE[b?.tone] ?? TONE.neutral });
   if (chrome.action.setBadgeTextColor) await chrome.action.setBadgeTextColor({ color: '#ffffff' });
-  await chrome.action.setTitle({ title: b?.title ?? 'Pulse · sign in to check in' });
+  const cached = (await chrome.storage.local.get('companionUpdate')).companionUpdate;
+  const ready = b && cached && newer(cached.manifest.version, version);
+  await chrome.action.setTitle({ title: (b?.title ?? 'Pulse · sign in to check in') + (ready ? ' · Update available' : '') });
 }
 
 /** The day, fetched at most every few minutes for the badge, always fresh when the popup asks (force). */
@@ -112,6 +128,7 @@ export function handleCompanionMessage(msg, respond) {
         if (pair && !pair.status && !polling) void pollPairing();
         return { signedIn: signedIn && !error?.signedOut, demo: !!demo, pair: pair ? { code: pair.code, url: pair.url, status: pair.status ?? 'pending', message: pair.message } : null, day: d, error, prefs: prefsWith(companionPrefs), base: base ?? null };
       }
+      case 'updates': await checkUpdates(); return (await chrome.storage.local.get('companionUpdate')).companionUpdate?.manifest ?? null;
       case 'act': return { day: await act(msg.action, msg.extra) };
       case 'pair': return await pairStart();
       case 'cancelPair': await chrome.storage.session.remove('companionPair'); return {};
@@ -128,8 +145,9 @@ export function handleCompanionMessage(msg, respond) {
 
 export function startCompanion() {
   chrome.alarms.create(ALARM, { periodInMinutes: 1 });
-  chrome.alarms.onAlarm.addListener((a) => { if (a.name === ALARM) void tick(); });
-  chrome.runtime.onStartup.addListener(() => void tick());
+  chrome.alarms.create(UPDATE_ALARM, { periodInMinutes: 240 });
+  chrome.alarms.onAlarm.addListener((a) => { if (a.name === ALARM) void tick(); if (a.name === UPDATE_ALARM) void checkUpdates().then(tick); });
+  chrome.runtime.onStartup.addListener(() => { void tick(); void checkUpdates().then(tick); });
   chrome.notifications.onButtonClicked.addListener((id) => {
     const [, action] = id.split(':');
     if (!ACTION_LABEL[action]) return;
@@ -138,5 +156,5 @@ export function startCompanion() {
       (e) => chrome.notifications.create({ type: 'basic', iconUrl: 'icons/128.png', title: 'Pulse could not do that', message: e.message, priority: 1 }));
     chrome.notifications.clear(id);
   });
-  void tick();
+  void tick(); void checkUpdates().then(tick);
 }

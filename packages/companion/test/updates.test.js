@@ -35,3 +35,9 @@ test('release signing gate refuses publication when signing configuration is abs
  const root=fileURLToPath(new URL('../../../',import.meta.url));
  assert.throws(()=>execFileSync(process.execPath,['apps/desktop/scripts/check-release.mjs'],{cwd:root,stdio:'pipe',env:{...process.env,TAURI_SIGNING_PRIVATE_KEY:'',ANDROID_SIGNING_STORE_BASE64:'',ANDROID_SIGNING_PASSWORD:''}}),error=>/Updater public key is not provisioned|Missing Actions secret/.test(error.stderr.toString()));
 });
+
+test('launch discovery works signed out, offers nothing and downloads only after sign-in',async()=>{
+ let checks=0,downloads=0;const c=new UpdateController({check:async()=>{checks++;return fixture();},prepare:async()=>{downloads++;}});
+ await c.poll({...context,signedIn:false});assert.equal(checks,1);assert.equal(downloads,0);assert.equal(c.offer({...context,signedIn:false}),null);
+ c.reset();await c.poll(context);assert.equal(checks,2);assert.equal(downloads,1);assert.ok(c.candidate);
+});

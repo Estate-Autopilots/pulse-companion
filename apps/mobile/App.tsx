@@ -55,12 +55,11 @@ function Pulse(){
  }
  useEffect(()=>{
   updater.reset();updateFile.current='';waitingPermission.current=false;
-  if(!me||me.mustChange)return;
   void updater.poll(updateState.current);
   const timer=setInterval(()=>{void updater.poll(updateState.current);updatePaint(n=>n+1);},60000);
   const sub=AppState.addEventListener('change',s=>{if(s!=='active')return;void updater.poll(updateState.current);if(waitingPermission.current&&canOfferUpdate(updateState.current))void canInstallUpdate().then(allowed=>{if(allowed){waitingPermission.current=false;void applyUpdate();}});});
   return()=>{clearInterval(timer);sub.remove();updater.reset();};
- },[me?.person]);
+ },[me?.person,me?.mustChange]);
  async function act(fn:()=>Promise<void>){setBusy(true);setError('');try{await fn();}catch(e){setError((e as Error).message);if([401,403].includes((e as {status?:number}).status??0))setData(null);}finally{setBusy(false);}}
  async function refresh(){if(tab==='Today'&&!data){const old=await cached(paths.Today);if(old)setData(old.data);}const old=await cached(paths[tab]);if(old){setData(old.data);setStamp(`As of ${new Date(old.at).toLocaleTimeString()}`);}const r=await load(paths[tab]);setData(r.data);setStamp(`${r.offline?'Offline · ':''}As of ${new Date(r.at).toLocaleTimeString()}`);}
  const refreshDay=useCallback(async(opts:{schedule?:boolean;here?:boolean}={})=>{

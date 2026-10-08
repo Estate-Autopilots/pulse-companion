@@ -46,12 +46,13 @@ export class UpdateController {
   reset() { this.generation++; this.candidate = null; this.status = ''; this.checkedAt = -Infinity; this.laterUntil = 0; this.changed(); }
   later() { this.laterUntil = this.clock() + UPDATE_INTERVAL; this.changed(); }
   async poll(context, force = false) {
-    if (!context.signedIn || context.demo || this.running || (!force && this.clock() - this.checkedAt < UPDATE_INTERVAL)) return;
+    if (context.demo || this.running || (!force && this.clock() - this.checkedAt < UPDATE_INTERVAL)) return;
     const epoch = this.generation; this.running = true; this.status = 'Checking for updates…'; this.changed();
     try {
       const found = await this.check();
       if (epoch !== this.generation) return;
       this.checkedAt = this.clock();
+      if (!context.signedIn) { this.candidate = null; this.status = found ? 'An update is available. Sign in to install it.' : 'Pulse is up to date'; return; }
       if (found) {
         this.status = 'Downloading the update…'; this.changed();
         await this.prepare(found);

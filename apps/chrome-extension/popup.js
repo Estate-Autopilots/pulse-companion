@@ -1,7 +1,7 @@
 // The toolbar popup: the same companion panel as the desktop app and the web widget. It only renders; every Pulse
 // call goes through the background worker (companion-worker.js).
 import { applyLocal, deriveView, prefsWith } from './shared/index.js';
-import { UpdateController, UPDATE_URL, parseManifest, newer } from './shared/updates.js';
+import { UpdateController, parseManifest, newer } from './shared/updates.js';
 import { updateCard } from './shared/update-card.js';
 import { icon, mountPanel, renderConnect } from './shared/panel.js';
 
@@ -22,14 +22,14 @@ const now = () => Date.now() + (state.s?.day?.offset ?? 0);
 
 const updateContext = () => ({ signedIn: !!state.s?.signedIn, demo: !!state.s?.demo, busy: state.busy, pending: !!state.s?.day?.queued, payload: state.s?.day?.payload });
 const updates = new UpdateController({ check: async () => {
-  const response = await fetch(`${UPDATE_URL}/test/latest.json`);
-  if (response.status === 204) return null;
-  if (!response.ok) throw Error('Update check failed');
-  const found = parseManifest(await response.json());
-  return newer(found.version, chrome.runtime.getManifest().version) ? found : null;
-}, clock: () => now(), changed: () => render() });
+  const found = await ask({ op: 'updates' });
+  return found && newer(found.version, chrome.runtime.getManifest().version) ? parseManifest(found) : null;
+}, clock: () => now(), changed: () => showUpdate() });
 updates.laterUntil = Number(localStorage.getItem('pulse.updateLater') || 0);
 function showUpdate() {
+  root.querySelector('.pc-update')?.remove();
+  const status = root.querySelector('[data-update-status]'); if (status) status.textContent = updates.status || 'Test channel · checks every four hours';
+  const check = root.querySelector('[data-update-check]'); if (check) check.disabled = updates.running || !!state.s?.demo;
   const update = updates.offer(updateContext());
   const zip = update?.files.find(f => f.platform === 'chrome' && f.kind === 'zip');
   if (zip) updateCard(state.screen === 'settings' ? root.firstElementChild : root, { update, showPip: state.s?.prefs?.mascot !== false, installLabel: 'Download update', hint: 'This is an unpacked extension. Unzip the download into your Pulse folder, then click Reload in chrome://extensions. Automatic installation starts after a Web Store listing is available.', onInstall: () => { if (updates.offer(updateContext())) void chrome.tabs.create({ url: zip.url }); }, onLater: () => { updates.later(); localStorage.setItem('pulse.updateLater', String(updates.laterUntil)); } });
@@ -85,9 +85,11 @@ function renderSettings(prefs) {
     row.append(input); wrap.append(row);
   };
   h('Updates');
-  const check = Object.assign(document.createElement('button'), { type: 'button', textContent: 'Check for updates', disabled: updates.running || !state.s?.signedIn || !!state.s?.demo });
+  const check = Object.assign(document.createElement('button'), { type: 'button', textContent: 'Check for updates', disabled: updates.running || !!state.s?.demo });
+  check.dataset.updateCheck = '';
   check.addEventListener('click', () => void updates.poll(updateContext(), true));
-  wrap.append(check, Object.assign(document.createElement('p'), { className: 'muted', textContent: updates.status || 'Test channel · checks every four hours' }));
+  const updateStatus = Object.assign(document.createElement('p'), { className: 'muted', textContent: updates.status }); updateStatus.dataset.updateStatus = '';
+  wrap.append(check, updateStatus);
   h('Reminders');
   toggle('Check in when my shift starts', 'checkIn');
   toggle(`Back from a break (after ${prefs.breakMinutes} min)`, 'breakBack');
@@ -123,8 +125,9 @@ function renderSettings(prefs) {
 }
 
 async function load(force = false) {
+  const before = !!state.s?.signedIn; const beforeDemo = !!state.s?.demo;
   try { state.s = await ask({ op: 'state', force }); } catch (e) { state.s = { signedIn: false, prefs: prefsWith({}) }; state.connect = { phase: 'error', message: e.message }; }
-  if (!state.s?.signedIn || state.s?.demo) updates.reset();
+  if (before !== !!state.s?.signedIn || beforeDemo !== !!state.s?.demo) updates.reset();
   render();
   void updates.poll(updateContext());
 }
@@ -152,4 +155,4 @@ setInterval(() => { if (state.screen === 'day' && state.s?.day) panel.tick(deriv
 setInterval(() => { if (state.s && !state.s.signedIn && state.s.pair) void load(); }, 3000);
 void load(true);
 
-setInterval(() => { void updates.poll(updateContext()); render(); }, 60000);
+setInterval(() => { void updates.poll(updateContext()); showUpdate(); }, 60000);

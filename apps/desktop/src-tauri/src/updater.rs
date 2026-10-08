@@ -59,7 +59,7 @@ fn backup(app: &AppHandle, target: &str) -> Result<(Journal, PathBuf), String> {
     #[cfg(not(target_os = "macos"))]
     let install = exe.parent().ok_or("Pulse install folder missing")?.to_path_buf();
     let marker = install.join(format!(".pulse-update-write-check-{}", uuid_suffix()));
-    std::fs::OpenOptions::new().write(true).create_new(true).open(&marker).map_err(|_| "Pulse needs a writable installation folder for safe updates. Use the per-user Windows installer.".to_string())?;
+    std::fs::OpenOptions::new().write(true).create_new(true).open(&marker).map_err(|_| if cfg!(target_os = "macos") { "Move Pulse from the disk image to a writable Applications folder before updating.".to_string() } else { "Pulse needs a writable installation folder for safe updates. Use the per-user Windows installer.".to_string() })?;
     let _ = std::fs::remove_file(marker); // only our empty permission probe, never an app-data file
     let relative_exe = exe.strip_prefix(&install).map_err(err)?.to_path_buf();
     let base = app.path().app_local_data_dir().map_err(err)?.join("previous-builds").join(format!("{}-{}", env!("CARGO_PKG_VERSION"), uuid_suffix()));

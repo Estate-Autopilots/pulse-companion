@@ -11,7 +11,8 @@ function fakeChrome() {
   c.action = { setBadgeText: async ({ text }) => { c.badge.text = text; }, setBadgeBackgroundColor: async ({ color }) => { c.badge.color = color; }, setBadgeTextColor: async () => {}, setTitle: async ({ title }) => { c.badge.title = title; } };
   c.tabs = { created: [], create: async ({ url }) => { c.tabs.created.push(url); } };
   c.notifications = { create: (id, o) => { c.notes.push(typeof id === 'string' ? { id, ...o } : id); }, clear: () => {}, onButtonClicked: { addListener: (f) => { c.listeners.button = f; } } };
-  c.alarms = { create: () => {}, onAlarm: { addListener: () => {} } };
+  c.alarmSettings = new Map();
+  c.alarms = { create: (name,options) => c.alarmSettings.set(name,options), onAlarm: { addListener: () => {} } };
   c.runtime = { getManifest: () => ({ version: '0.2.0' }), onStartup: { addListener: () => {} } };
   return c;
 }
@@ -22,6 +23,7 @@ globalThis.chrome = fakeChrome();
 const { demoPayload } = await import('../shared/index.js');
 let pulse = { state: 'out', approved: false, calls: [] };
 globalThis.fetch = async (url, init) => {
+  if (url.includes('/api/app-updates/')) { if (!pulse.update) return new Response(null,{status:204}); pulse.updateRequest=init; return json(200,pulse.update); }
   const path = url.split('/api/native/v0/')[1];
   pulse.calls.push({ path, auth: init.headers.authorization ?? null, body: init.body ? JSON.parse(init.body) : null, credentials: init.credentials });
   if (path === 'native/pair/start') return json(200, { pairId: '0e8b9d4e-1b7a-4a43-9b8c-0a1b2c3d4e5f', pollSecret: T('p'), code: 'KQ7M-4TXA', expiresIn: 600, interval: 0.01 });
@@ -99,4 +101,13 @@ test('demo mode works without an account and saves nothing', async () => {
   assert.equal(s.day.payload.state, 'in');
   await ask({ op: 'demo', on: false });
   assert.equal((await ask({ op: 'state' })).data.signedIn, false);
+});
+
+test('background update discovery uses public metadata, no device credential, and the registered four-hour alarm', async () => {
+  pulse.update = {version:'0.3.1',channel:'test',notes:'Pip updates',platforms:{},files:[]};
+  const result = await ask({op:'updates'});
+  assert.equal(result.ok,true);assert.equal(result.data.version,'0.3.1');
+  assert.equal(chrome.alarmSettings.get('pulse-companion-updates').periodInMinutes,240);
+  assert.equal(pulse.updateRequest.credentials,'omit');assert.equal(pulse.updateRequest.headers.authorization,undefined);
+  assert.equal((await chrome.storage.local.get('companionUpdate')).companionUpdate.manifest.notes,'Pip updates');
 });
