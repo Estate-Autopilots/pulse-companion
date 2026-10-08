@@ -45,7 +45,6 @@ jobs:
         run: pnpm --dir apps/desktop exec tauri build --bundles '${{ matrix.bundles }}' ${{ matrix.target && format('--target {0}', matrix.target) || '' }}
       - name: Screenshot the panel on the runner (Windows)
         if: matrix.platform == 'windows'
-        continue-on-error: true
         shell: pwsh
         run: |
           New-Item -ItemType Directory -Force screens | Out-Null
@@ -54,6 +53,13 @@ jobs:
           Get-Process pulse-desktop -ErrorAction SilentlyContinue | Format-Table Id, MainWindowTitle, Responding
           if ($app.HasExited) { throw "Pulse exited with code $($app.ExitCode)" }
           Add-Type -AssemblyName System.Windows.Forms,System.Drawing
+          Add-Type -TypeDefinition 'using System; using System.Runtime.InteropServices; public class PulseWindows { [DllImport("user32.dll")] public static extern bool IsWindowVisible(IntPtr hWnd); }'
+          $app.Refresh(); $panel = $app.MainWindowHandle
+          if ($panel -eq 0) { throw 'Pulse panel handle missing' }
+          [System.Windows.Forms.SendKeys]::SendWait('^%p'); Start-Sleep -Seconds 2
+          if ([PulseWindows]::IsWindowVisible($panel)) { throw 'Global shortcut did not hide the panel' }
+          [System.Windows.Forms.SendKeys]::SendWait('^%p'); Start-Sleep -Seconds 2
+          if (-not [PulseWindows]::IsWindowVisible($panel)) { throw 'Global shortcut did not reopen the panel' }
           $b = [System.Windows.Forms.Screen]::PrimaryScreen.Bounds
           $bmp = New-Object System.Drawing.Bitmap $b.Width, $b.Height
           $g = [System.Drawing.Graphics]::FromImage($bmp); $g.CopyFromScreen($b.Location, [System.Drawing.Point]::Empty, $b.Size)
@@ -61,7 +67,6 @@ jobs:
           Stop-Process -Id $app.Id -Force
       - name: Screenshot the panel on the runner (macOS)
         if: matrix.platform == 'macos'
-        continue-on-error: true
         run: |
           mkdir -p screens
           dmg=$(find apps/desktop/src-tauri/target -path '*bundle/dmg/*.dmg' -print -quit)
@@ -141,7 +146,18 @@ jobs:
             adb install -r apk/*.apk
             adb shell pm grant com.pulse.work.mobile android.permission.POST_NOTIFICATIONS || true
             adb shell am start -W -n com.pulse.work.mobile/.MainActivity; sleep 12; adb exec-out screencap -p > screens/android-start.png
-            for s in out in break done; do adb shell am start -W -a android.intent.action.VIEW -d "pulse://demo?state=$s" com.pulse.work.mobile; sleep 6; adb exec-out screencap -p > screens/android-$s.png; done
+            adb shell dumpsys appwidget > screens/android-widget-providers.txt
+            for s in out in break done; do
+              adb shell am start -W -a android.intent.action.VIEW -d "pulse://demo?state=$s" com.pulse.work.mobile
+              sleep 6
+              adb exec-out screencap -p > screens/android-$s.png
+              if [ "$s" = in ] || [ "$s" = break ]; then
+                adb shell cmd statusbar expand-notifications
+                sleep 2
+                adb exec-out screencap -p > screens/android-ribbon-$s.png
+                adb shell cmd statusbar collapse
+              fi
+            done
             adb shell cmd uimode night yes; adb shell am start -W -a android.intent.action.VIEW -d "pulse://demo?state=in" com.pulse.work.mobile; sleep 6; adb exec-out screencap -p > screens/android-in-dark.png
       - uses: actions/upload-artifact@v7
         with:

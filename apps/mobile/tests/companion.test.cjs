@@ -113,7 +113,7 @@ test('automatic check-in waits for server-confirmed dwell; each person controls 
   const on = fixture({ autoHr: true, prefs: { presence: true, autoCheckIn: true } });
   const d = await on.m.onRegion('enter', `office:${on.office.id}`);
   assert.equal(d.kind, 'suggest-check-in');
-  const post = on.requests.find((r) => r.path === 'companion/presence');
+  const post = on.requests.find((r) => r.path === 'companion/presence' && r.body.region==='enter');
   assert.equal(post.body.consent, true); assert.equal(post.body.autoConsent, true); assert.equal(post.body.region, 'enter');
   assert.equal(on.requests.filter(r=>r.path==='attendance/check-in').length,0);
   assert.match(on.scheduled[0].content.title, /check in/);
@@ -192,4 +192,13 @@ test('repeated office Wi-Fi lookups do not reset foreground network listeners', 
   await f.m.checkHere(core.demoPayload('out', IST('09:50')));
   await f.m.checkHere(core.demoPayload('out', IST('09:50')));
   assert.equal(f.wifiConfigurations(), 1);
+});
+
+test('an opt-out saved offline is sent before the next day refresh after reconnect',async()=>{
+ const f=fixture({offline:true,prefs:{presence:true,autoCheckIn:true}});
+ await f.m.writePrefs({presence:false,autoCheckIn:false});f.net.offline=false;
+ const before=f.requests.length;await f.m.loadDay();
+ const reconciled=f.requests.slice(before).find(r=>r.path==='companion/presence');
+ assert.deepEqual(plain(reconciled.body),{consent:false,autoConsent:false,consentOnly:true});
+ assert.equal(f.gpsReads(),0);
 });

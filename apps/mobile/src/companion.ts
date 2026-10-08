@@ -28,7 +28,7 @@ export async function readPrefs(): Promise<Prefs> {
 export async function writePrefs(next: Partial<Prefs>) {
   const p = prefsWith({ ...(await readPrefs()), ...next });
   await SecureStore.setItemAsync(PREFS, JSON.stringify(p), { keychainAccessible: SecureStore.AFTER_FIRST_UNLOCK });
-  if ('presence' in next || 'autoCheckIn' in next) await request('companion/presence',{consent:p.presence,autoConsent:p.autoCheckIn}).catch(() => null);
+  if ('presence' in next || 'autoCheckIn' in next) await request('companion/presence',{consent:p.presence,autoConsent:p.autoCheckIn,consentOnly:true}).catch(() => null);
   return p;
 }
 
@@ -37,6 +37,9 @@ export async function writePrefs(next: Partial<Prefs>) {
 export async function loadDay(): Promise<{ payload: CompanionPayload; offline: boolean; queued: number; at: string } | null> {
   const queue = await queueRead<QueueItem>();
   try {
+    // Reconcile preferences first, including an opt-out saved offline, before a GET can tick office dwell.
+    const p=await readPrefs();
+    await request('companion/presence',{consent:p.presence,autoConsent:p.autoCheckIn,consentOnly:true});
     const r = await load('companion');
     const payload = r.data as CompanionPayload;
     return { payload: queue.length ? projected(payload, queue) : payload, offline: r.offline, queued: queue.length, at: r.at };
