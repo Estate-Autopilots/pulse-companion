@@ -1,6 +1,8 @@
 // The desktop companion panel (Windows tray / Mac menu bar). Uses the shared companion core; the Rust side keeps
 // the device credential, talks to Pulse, positions the window, shows notifications and drives the tray.
 import { applyLocal, badge, celebration, clockOffset, deriveView, demoClient, dueReminders, enqueue, outcomeOf, prefsWith, prune, queuedRequest, settle, shouldPopUp, projected } from './companion/index.js';
+import { UpdateController, canOfferUpdate } from './companion/updates.js';
+import { updateCard } from './companion/update-card.js';
 import { icon, mountPanel, renderConnect } from './companion/panel.js';
 
 const invoke = (cmd, args) => window.__TAURI__.core.invoke(cmd, args);
@@ -20,6 +22,17 @@ const panel = mountPanel(root, {
   onOpen: (href) => void invoke('open_pulse', { path: href }),
   onTool: (tool) => { if (tool === 'settings') { state.screen = 'settings'; render(); } else void invoke('panel_hide'); },
 });
+
+const updateContext = () => ({ signedIn: !!state.session?.signedIn, demo: !!state.demo, busy: state.busy || state.installing, pending: state.queue.length > 0 || state.syncing, payload: state.payload });
+const updates = new UpdateController({ check: () => invoke('update_check', { channel: store.get('updateChannel', 'test') }), prepare: () => invoke('update_prepare'), clock: () => now(), changed: () => updateUi() });
+updates.laterUntil = store.get('updateLater', 0);
+async function installUpdate() {
+  if (!updates.offer(updateContext())) return;
+  state.installing = true; render();
+  try { await invoke('update_install', { safe: canOfferUpdate(updateContextForInstall()) }); }
+  catch (e) { state.installing = false; state.status = { text: String(e), tone: 'warning' }; render(); }
+}
+function updateContextForInstall() { return { ...updateContext(), busy: state.busy }; }
 
 function failure(e) {
   if (e && typeof e === 'object' && 'message' in e && !(e instanceof Error)) return e;
@@ -55,10 +68,22 @@ function render() {
     const p = state.queue.length && state.payload ? projected(state.payload, state.queue) : state.payload;
     panel.reset();
     panel.render(deriveView(p, now(), { celebrate: state.celebrate }), {
-      busy: state.busy, status: state.status?.text ?? (state.demo ? 'Demo · nothing is saved' : state.queue.length ? `${state.queue.length} saved on this computer · will sync` : undefined),
+      busy: state.busy || state.installing, status: state.status?.text ?? (state.demo ? 'Demo · nothing is saved' : state.queue.length ? `${state.queue.length} saved on this computer · will sync` : undefined),
       statusTone: state.status?.tone, mode: state.mode ?? p?.shift?.mode ?? 'office', showPip: state.prefs.mascot,
       tools: [{ id: 'settings', label: 'Settings', icon: 'settings' }, { id: 'close', label: `Hide (${state.info.shortcut})`, icon: 'close' }],
     });
+  }
+  updateUi();
+}
+function updateUi() {
+  root.querySelector('.pc-update')?.remove();
+  const status = root.querySelector('[data-update-status]'); if (status) status.textContent = updates.status || 'Pulse checks every four hours.';
+  const check = root.querySelector('[data-update-check]'); if (check) check.disabled = updates.running || !!state.demo;
+  const update = updates.offer(updateContext());
+  if (update) {
+    updateCard(state.screen === 'settings' ? root.firstElementChild : root, { update, showPip: state.prefs.mascot, onInstall: () => void installUpdate(), onLater: () => { updates.later(); store.set('updateLater', updates.laterUntil); } });
+    const announcement = `${store.get('updateChannel', 'test')}:${update.version}:${updates.laterUntil}`;
+    if (store.get('updateAnnounced', '') !== announcement) { store.set('updateAnnounced', announcement); void invoke('panel_show').catch(() => {}); }
   }
   fit();
 }
@@ -90,6 +115,17 @@ function renderSettings() {
     wrap.append(row);
   };
   const setPref = (key, value) => { state.prefs = prefsWith({ ...state.prefs, [key]: value }); store.set('prefs', state.prefs); };
+  section('Updates');
+  const check = Object.assign(document.createElement('button'), { type: 'button', className: 'pc-btn', textContent: 'Check for updates', disabled: updates.running || !!state.demo });
+  check.dataset.updateCheck = '';
+  check.addEventListener('click', () => void updates.poll(updateContext(), true));
+  const updateStatus = Object.assign(document.createElement('p'), { className: 'muted', textContent: updates.status }); updateStatus.dataset.updateStatus = '';
+  wrap.append(check, updateStatus);
+  const select = document.createElement('select'); select.setAttribute('aria-label', 'Update channel');
+  for (const value of ['test', 'stable']) select.append(Object.assign(document.createElement('option'), { value, textContent: value === 'test' ? 'Test updates' : 'Stable updates' }));
+  select.value = store.get('updateChannel', 'test');
+  select.addEventListener('change', () => { store.set('updateChannel', select.value); updates.reset(); void updates.poll(updateContext(), true); });
+  wrap.append(select);
   section('Reminders');
   toggle('Check in when my shift starts', null, state.prefs.checkIn, (v) => setPref('checkIn', v));
   toggle('Back from a break', `After ${state.prefs.breakMinutes} minutes away`, state.prefs.breakBack, (v) => setPref('breakBack', v));
@@ -112,7 +148,7 @@ function renderSettings() {
   section('Account');
   if (state.session?.signedIn) {
     const who = Object.assign(document.createElement('p'), { className: 'muted', textContent: `Signed in as ${state.session.personName || 'you'} on ${new URL(state.session.base).host}. Sign this computer out here, in Settings → Devices or Account / Security.` });
-    const out = Object.assign(document.createElement('button'), { type: 'button', className: 'pc-btn', textContent: 'Sign out of this computer' });
+    const out = Object.assign(document.createElement('button'), { type: 'button', className: 'pc-btn', textContent: 'Sign out of this computer', disabled: !!state.installing });
     out.addEventListener('click', () => void signOut());
     wrap.append(who, out);
   } else if (state.developer) {
@@ -131,16 +167,19 @@ function renderSettings() {
 async function refresh() {
   if (state.screen === 'connect' && !state.demo) return;
   try {
+    state.syncing = true; updateUi();
     await flush();
     const p = await client().companion();
     state.payload = p; state.offset = clockOffset(p);
     if (state.status?.tone === 'warning') state.status = null;
   } catch (e) {
     const f = failure(e);
-    if (f.signedOut) { state.session = await invoke('companion_session'); state.screen = 'connect'; state.connect = { phase: 'start', message: f.message }; }
+    if (f.signedOut) { updates.reset(); state.session = await invoke('companion_session'); state.screen = 'connect'; state.connect = { phase: 'start', message: f.message }; }
     else state.status = { text: f.message, tone: 'warning' };
   }
+  state.syncing = false;
   render(); tray(); remind();
+  void updates.poll(updateContext());
 }
 async function flush() {
   if (state.demo) return;
@@ -155,7 +194,7 @@ async function flush() {
   store.set('queue', state.queue);
 }
 async function act(id) {
-  if (state.busy || !state.payload) return;
+  if (state.busy || state.installing || !state.payload) return;
   const before = state.payload, at = now(), extra = id === 'check-in' ? { mode: state.mode ?? before.shift?.mode ?? 'office' } : {};
   state.busy = true; state.status = null;
   state.payload = { ...applyLocal(before, id, at, extra), pending: false };
@@ -228,6 +267,7 @@ const connectHandlers = {
   onDemo() { state.demo = demoClient('out'); state.screen = 'day'; void refresh(); },
 };
 async function signedIn(session) {
+  updates.reset();
   state.session = session; state.demo = null; state.screen = 'day'; state.connect = { phase: 'start' };
   await refresh();
   state.status = { text: `Hello${session.personName ? `, ${session.personName.split(' ')[0]}` : ''}! You’re connected.`, tone: 'success' };
@@ -235,6 +275,7 @@ async function signedIn(session) {
   setTimeout(() => { state.celebrate = false; render(); }, 3500);
 }
 async function signOut() {
+  updates.reset();
   state.session = await invoke('companion_sign_out');
   state.payload = null; state.queue = []; store.set('queue', []); state.screen = 'connect'; state.connect = { phase: 'start', message: 'Signed out of this computer.' };
   render(); tray();
@@ -251,7 +292,11 @@ async function boot() {
   state.session = await invoke('companion_session');
   state.screen = state.session.signedIn ? 'day' : 'connect';
   render();
+  // Startup health includes the real WebView loading and session initialization. Works signed out too.
+  await invoke('update_healthy').catch(() => {});
   await refresh();
+  void updates.poll(updateContext());
+  setInterval(() => { void updates.poll(updateContext()); updateUi(); }, 60000);
   setInterval(tick, 1000);
   setInterval(() => { tray(); remind(); }, 30000);
   setInterval(() => void refresh(), 120000);

@@ -1,4 +1,6 @@
 mod companion;
+mod updater;
+use updater::{update_check, update_prepare, update_install, update_healthy, Updates, Gate};
 
 use companion::Companion;
 use pulse_desktop_core::{
@@ -127,9 +129,16 @@ fn companion_session(state: State<'_, Companion>) -> Value { state.session() }
 #[tauri::command]
 async fn companion_request(app: AppHandle, path: String, body: Option<Value>) -> Result<Value, String> {
     if !path.chars().all(|c| c.is_ascii_alphanumeric() || "/-?=&".contains(c)) { return Err(companion::CallError::default().text()); }
-    tauri::async_runtime::spawn_blocking(move || app.state::<Companion>().request(&path, body).map_err(err))
-        .await
-        .map_err(|_| "{\"message\":\"Pulse request interrupted\"}".to_string())?
+    {
+        let gate_state = app.state::<Gate>(); let mut gate = gate_state.0.lock().unwrap();
+        if gate.1 { return Err("Pulse is installing an update. Try again after restart.".into()); }
+        gate.0 += 1;
+    }
+    let request_app = app.clone();
+    let result = tauri::async_runtime::spawn_blocking(move || request_app.state::<Companion>().request(&path, body).map_err(err))
+        .await.map_err(|_| "{\"message\":\"Pulse request interrupted\"}".to_string());
+    app.state::<Gate>().0.lock().unwrap().0 -= 1;
+    result?
 }
 
 #[tauri::command]
@@ -163,6 +172,7 @@ async fn companion_password(app: AppHandle, base: String, username: String, pass
 
 #[tauri::command]
 async fn companion_sign_out(app: AppHandle) -> Result<Value, String> {
+    if app.state::<Gate>().0.lock().unwrap().1 { return Err("Wait for Pulse to finish installing".into()); }
     tauri::async_runtime::spawn_blocking(move || app.state::<Companion>().sign_out())
         .await
         .map_err(|_| "Sign-out interrupted".to_string())
@@ -293,6 +303,9 @@ pub fn run() {
         .plugin(tauri_plugin_single_instance::init(|app, _args, _cwd| show_panel(app)))
         .plugin(tauri_plugin_autostart::init(MacosLauncher::LaunchAgent, Some(vec!["--autostart"])))
         .plugin(tauri_plugin_notification::init())
+        .plugin(tauri_plugin_updater::Builder::new().build())
+        .manage(Updates::default())
+        .manage(Gate::default())
         .plugin(
             tauri_plugin_global_shortcut::Builder::new()
                 .with_handler(move |app, shortcut, event| {
@@ -380,9 +393,14 @@ pub fn run() {
             // --pinned keeps the panel open (screenshots on build runners and demos).
             if std::env::args().any(|a| a == "--pinned") { app.state::<Mutex<Anchor>>().lock().unwrap().pinned = true; }
             if !std::env::args().any(|a| a == "--autostart") { show_panel(app.handle()); }
+            updater::hosted_acceptance(app.handle());
             Ok(())
         })
         .invoke_handler(tauri::generate_handler![
+            update_check,
+            update_prepare,
+            update_install,
+            update_healthy,
             companion_session,
             companion_request,
             companion_pair_start,

@@ -202,3 +202,17 @@ test('an opt-out saved offline is sent before the next day refresh after reconne
  assert.deepEqual(plain(reconciled.body),{consent:false,autoConsent:false,consentOnly:true});
  assert.equal(f.gpsReads(),0);
 });
+
+test('headless attendance activity suppresses an update offer until all serialized work settles', async () => {
+  const f = fixture({ offline: true });
+  const policy = require(path.resolve(__dirname, '../../../packages/companion/src/updates.js'));
+  const events = []; const stop = f.m.observeAttendance(() => events.push(f.m.attendanceInProgress()));
+  const first = f.m.act('check-in'), second = f.m.act('break-start');
+  assert.equal(f.m.attendanceInProgress(), true);
+  const context = { signedIn: true, payload: { shiftStartsAt: '2026-10-08T01:00:00Z' }, at: Date.parse('2026-10-08T10:00:00Z') };
+  assert.equal(policy.canOfferUpdate({ ...context, pending: f.m.attendanceInProgress() }), false);
+  await Promise.all([first, second]);
+  assert.equal(f.m.attendanceInProgress(), false);
+  assert.equal(policy.canOfferUpdate({ ...context, pending: f.m.attendanceInProgress() }), true);
+  assert.equal(events.at(-1), false);stop();
+});

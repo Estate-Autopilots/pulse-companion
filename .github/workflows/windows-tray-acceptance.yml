@@ -1,5 +1,9 @@
 name: Verify built Windows tray
 on:
+  workflow_call:
+    inputs:
+      build_run: {required: true, type: string}
+      artifact_name: {required: true, type: string}
   workflow_dispatch:
     inputs:
       build_run: {description: 'Pulse Companion builds run', required: true, type: string}
