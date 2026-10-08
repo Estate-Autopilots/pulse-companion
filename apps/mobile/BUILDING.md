@@ -6,6 +6,7 @@ Long-press the Pulse heading on the sign-in screen to reveal the developer serve
 ## iPhone builds
 
 The public workflow builds both an iPhone Simulator `.app` archive and an unsigned device `.app` archive.
+The hosted simulator archive targets Apple Silicon (arm64); on an Intel Mac build with `ARCHS=x86_64`.
 The device archive needs Apple signing before installation; it is not an installable IPA.
 
 On a Mac with Node from `.nvmrc`, Xcode and CocoaPods:
