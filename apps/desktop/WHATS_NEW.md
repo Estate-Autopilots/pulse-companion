@@ -1,1 +1,1 @@
-Pip can offer verified Pulse updates. Download in the background, choose Install and restart, and keep your sign-in and saved taps. Android updates open the system installer; Chrome offers a fresh extension download.
+Today, Inbox and Chats in your small Pulse panel. Group messages and DMs ping each signed-in laptop while Pulse runs, with unread badges, quick replies, quiet hours and notification preferences. Click a ping to open its conversation.

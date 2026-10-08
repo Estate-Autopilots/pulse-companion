@@ -3,6 +3,7 @@
 import { applyLocal, badge, celebration, clockOffset, deriveView, demoClient, dueReminders, enqueue, outcomeOf, prefsWith, prune, queuedRequest, settle, shouldPopUp, projected } from './companion/index.js';
 import { UpdateController, canOfferUpdate } from './companion/updates.js';
 import { updateCard } from './companion/update-card.js';
+import { mountCommunications } from './companion/communications.js';
 import { icon, mountPanel, renderConnect } from './companion/panel.js';
 
 const invoke = (cmd, args) => window.__TAURI__.core.invoke(cmd, args);
@@ -16,7 +17,12 @@ const state = {
   connect: { phase: 'start' }, prefs: prefsWith(store.get('prefs', {})), mode: store.get('mode', null), queue: store.get('queue', []),
   shown: new Set(store.get('shown', [])), info: { version: '', shortcut: 'Ctrl+Alt+P' }, autostart: false, lastTray: '', pollTimer: null,
 };
-const panel = mountPanel(root, {
+const communications = mountCommunications(root, {
+  call: (path,body) => invoke('companion_request',{path,body:body??null}),
+  onEnablePings:()=>void invoke('companion_ping_enable').then(()=>communications.status('Laptop pings enabled. Check OS Focus or Do not disturb if a banner is missing.')).catch(e=>communications.status(String(e))),
+  onOpen: (path) => void invoke('open_pulse',{path}),onSwitch:()=>void signOut(),onResize:fit,isVisible:()=>state.panelVisible!==false&&document.visibilityState==='visible',
+});
+const panel = mountPanel(communications.todayHost, {
   onAction: (id) => void act(id),
   onMode: (mode) => { state.mode = mode; store.set('mode', mode); render(); },
   onOpen: (href) => void invoke('open_pulse', { path: href }),
@@ -66,6 +72,7 @@ function render() {
   } else if (state.screen === 'settings') renderSettings();
   else {
     const p = state.queue.length && state.payload ? projected(state.payload, state.queue) : state.payload;
+    communications.attach();
     panel.reset();
     panel.render(deriveView(p, now(), { celebrate: state.celebrate }), {
       busy: state.busy || state.installing, status: state.status?.text ?? (state.demo ? 'Demo · nothing is saved' : state.queue.length ? `${state.queue.length} saved on this computer · will sync` : undefined),
@@ -239,7 +246,7 @@ const connectHandlers = {
   async onPair() {
     state.connect = { phase: 'start', busy: true, message: 'Opening Pulse in your browser…' }; render();
     try {
-      const started = await invoke('companion_pair_start', { base: state.session?.base ?? 'https://pulse.estateautopilots.com/api/native/v0' });
+      const started = await invoke('companion_pair_start', { expectedPerson:store.get('expectedPerson',null), base: state.session?.base ?? 'https://pulse.estateautopilots.com/api/native/v0' });
       state.connect = { phase: 'code', code: started.code, url: started.verifyUrl, message: 'Waiting for your approval…' }; render();
       clearInterval(state.pollTimer);
       const deadline = Date.now() + (started.expiresIn ?? 600) * 1000;
@@ -264,7 +271,7 @@ const connectHandlers = {
       await signedIn(r);
     } catch (e) { const f = failure(e); state.connect = { phase: f.gate ? 'gate' : 'password', twoStep: state.connect.twoStep, message: f.message }; render(); }
   },
-  onDemo() { state.demo = demoClient('out'); state.screen = 'day'; void refresh(); },
+  onDemo() { state.demo = demoClient('out'); state.screen = 'day'; void refresh();void communications.refresh(); },
 };
 async function signedIn(session) {
   updates.reset();
@@ -283,7 +290,8 @@ async function signOut() {
 
 // ---------------------------------------------------------------------------------------------------- start
 window.pulsePanel = {
-  shown() { root.firstElementChild?.classList.remove('pc-enter'); void root.offsetWidth; root.firstElementChild?.classList.add('pc-enter'); void refresh(); },
+  hidden(){state.panelVisible=false;},
+  shown() {state.panelVisible=true;root.firstElementChild?.classList.remove('pc-enter'); void root.offsetWidth; root.firstElementChild?.classList.add('pc-enter'); void refresh();void communications.refresh(); },
 };
 document.addEventListener('keydown', (e) => { if (e.key === 'Escape') void invoke('panel_hide'); });
 async function boot() {
@@ -295,6 +303,11 @@ async function boot() {
   // Startup health includes the real WebView loading and session initialization. Works signed out too.
   await invoke('update_healthy').catch(() => {});
   await refresh();
+  if(window.__TAURI__.event)await window.__TAURI__.event.listen('pulse:open-conversation',({payload})=>{
+    state.screen=state.session?.signedIn?'day':'connect';if(payload.error&&!state.session?.signedIn)state.connect={phase:'start',message:payload.error};render();if(payload.channelId)communications.open(payload.channelId,payload.href);else if(payload.notificationId)communications.showInbox();if(payload.error)communications.status(payload.error);
+  });
+  const inboxTick=async()=>{if(!state.session?.signedIn||state.demo)return;try{const s=await invoke('companion_ping_state');state.panelVisible=s.panelVisible;if(s.snapshot){communications.snapshot(s.snapshot);if(s.snapshot.person?.id)store.set('expectedPerson',s.snapshot.person.id);}if(s.error)communications.status(s.error);}catch{/* native status unavailable */}};
+  void inboxTick();setInterval(()=>void inboxTick(),2500);
   void updates.poll(updateContext());
   setInterval(() => { void updates.poll(updateContext()); updateUi(); }, 60000);
   setInterval(tick, 1000);

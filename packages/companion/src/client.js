@@ -17,9 +17,9 @@ export class ApiError extends Error {
 }
 
 /** The web page where the person approves a pairing code, on the same Pulse site as the gateway. */
-export function verifyUrl(base, code) {
+export function verifyUrl(base, code, expectedPerson) {
   const u = new URL(base);
-  return `${u.origin}/connect?code=${encodeURIComponent(code)}`;
+  return `${u.origin}/connect?code=${encodeURIComponent(code)}${expectedPerson?`&expected=${encodeURIComponent(expectedPerson)}`:''}`;
 }
 
 export function checkBase(base) {
@@ -34,7 +34,7 @@ export function checkBase(base) {
  * tokens: { accessToken, refreshToken, deviceId, person? }
  * credentials: 'include' lets the Chrome extension pass the browser's Access cookie along; native apps omit it.
  */
-export function createClient({ base = DEFAULT_BASE, fetchImpl = globalThis.fetch, store, client = 'companion/0.3.0', credentials = 'omit', timeoutMs = 20000 }) {
+export function createClient({ base = DEFAULT_BASE, fetchImpl = globalThis.fetch, store, client = 'companion/0.3.2', credentials = 'omit', timeoutMs = 20000 }) {
   base = checkBase(base);
   let refreshing = null;
 
@@ -89,6 +89,7 @@ export function createClient({ base = DEFAULT_BASE, fetchImpl = globalThis.fetch
       if (r.status === 429) e.retryAfter = Number(r.headers.get('retry-after') ?? 30);
       throw e;
     }
+    if(auth){const latest=await store.get();if(!latest||latest.deviceId!==tokens.deviceId){const e=new ApiError(401,'Your Pulse sign-in changed. Try again.');e.signedOut=true;throw e;}}
     return data;
   }
 
