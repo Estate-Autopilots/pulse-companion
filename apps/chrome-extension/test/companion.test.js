@@ -129,3 +129,16 @@ test('group feed notifies once, updates the Chrome badge and opens the exact con
  pulse.communications=null;
  await ask({op:'signOut'});
 });
+
+test('blocked Chrome notifications stay explained after a successful feed refresh',async()=>{
+ await chrome.storage.local.set({companionDevice:{refreshToken:T('r'),deviceId:'blocked-device',person:{id:'p1'}}});
+ await chrome.storage.session.set({companionAccess:T('a')});
+ pulse.communications={person:{id:'p1',name:'Pip Demo'},rows:[],counts:{chats:2,inbox:0,total:2},cursor:new Date().toISOString()};
+ const permission=chrome.notifications.getPermissionLevel;
+ try{
+  chrome.notifications.getPermissionLevel=async()=> 'denied';
+  const blocked=await ask({op:'communicationState'});assert.equal(blocked.ok,true);assert.match(blocked.data.error,/blocked/);assert.equal(blocked.data.snapshot.counts.total,2);
+  chrome.notifications.getPermissionLevel=async()=> 'granted';
+  assert.equal((await ask({op:'communicationState'})).data.error,null);
+ }finally{chrome.notifications.getPermissionLevel=permission;pulse.communications=null;await ask({op:'signOut'});}
+});

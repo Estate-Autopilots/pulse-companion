@@ -139,21 +139,24 @@ impl Companion {
     pub fn request(&self, path: &str, body: Option<Value>) -> Result<Value, CallError> {
         let tokens = self.tokens.lock().unwrap().clone().ok_or_else(CallError::signed_out)?;
         let (mut status, mut data) = self.send(&tokens.base, path, body.as_ref(), Some(&tokens.access_token), None)?;
+        if self.tokens.lock().unwrap().as_ref().map(|t|&t.device_id)!=Some(&tokens.device_id){return Err(self.changed_session());}
         if status == 401 {
             let fresh = self.refreshed(&tokens)?;
             (status, data) = self.send(&fresh.base, path, body.as_ref(), Some(&fresh.access_token), None)?;
+            if self.tokens.lock().unwrap().as_ref().map(|t|&t.device_id)!=Some(&tokens.device_id){return Err(self.changed_session());}
             if status == 401 { self.clear_device(&tokens.device_id); return Err(CallError::signed_out()); }
         }
-        if self.tokens.lock().unwrap().as_ref().map(|t|&t.device_id)!=Some(&tokens.device_id){return Err(CallError::signed_out());}
+        if self.tokens.lock().unwrap().as_ref().map(|t|&t.device_id)!=Some(&tokens.device_id){return Err(self.changed_session());}
         if !(200..300).contains(&status) { return Err(Self::fail(status, &data)); }
         Ok(data)
     }
     fn refreshed(&self, used: &Tokens) -> Result<Tokens, CallError> {
         let _one = self.refresh.lock().unwrap();
         let current = self.tokens.lock().unwrap().clone().ok_or_else(CallError::signed_out)?;
-        if current.device_id!=used.device_id {return Err(CallError::signed_out());}
+        if current.device_id!=used.device_id {return Err(self.changed_session());}
         if current.access_token != used.access_token { return Ok(current); }
         let (status, data) = self.send(&current.base, "native/refresh", Some(&json!({"refreshToken": current.refresh_token})), None, None)?;
+        if self.tokens.lock().unwrap().as_ref().map(|t|&t.device_id)!=Some(&current.device_id){return Err(self.changed_session());}
         let (Some(access), Some(refresh)) = (data["accessToken"].as_str(), data["refreshToken"].as_str()) else { self.clear_device(&current.device_id); return Err(CallError::signed_out()); };
         if status != 200 { self.clear_device(&current.device_id); return Err(CallError::signed_out()); }
         let next = Tokens { access_token: access.into(), refresh_token: refresh.into(), ..current.clone() };
@@ -169,6 +172,9 @@ impl Companion {
         *live = Some(t);
         drop(live);
         Ok(self.session())
+    }
+    fn changed_session(&self) -> CallError {
+        if self.tokens.lock().unwrap().is_some() {CallError::status(409,"Your Pulse sign-in changed. Try again.")} else {CallError::signed_out()}
     }
     fn clear_device(&self, device: &str) {
         let mut live=self.tokens.lock().unwrap();

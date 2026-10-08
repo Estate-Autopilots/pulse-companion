@@ -43,6 +43,8 @@ let communicationSnapshot=null,pingError=null;
 const feeds=new Map();
 async function chatTick(){
  const tokens=await companionStore.get();if(demo||!tokens){communicationSnapshot=null;return;}
+ const permission=chrome.notifications.getPermissionLevel?await chrome.notifications.getPermissionLevel():'granted';
+ pingError=permission==='granted'?null:'Chrome notifications are blocked. Allow Pulse notifications in browser settings.';
  const identity=tokens.deviceId;
  let feed=feeds.get(identity);
  if(!feed){
@@ -50,7 +52,7 @@ async function chatTick(){
   feed=createFeed({call:async(path)=>(await client()).call(path),load:()=>saved?.deviceId===identity?saved:null,
    acknowledge:async rows=>{if(rows.length)await (await client()).call('companion/ack',{ids:rows.map(n=>n.id)});},
    save:(_id,state)=>{void chrome.storage.local.set({companionFeed:{...state,deviceId:identity}});},
-   onSnapshot:state=>{communicationSnapshot=state;pingError=null;void chrome.storage.local.set({companionExpectedPerson:state.person?.id});void setBadge(null);},
+   onSnapshot:state=>{communicationSnapshot=state;void chrome.storage.local.set({companionExpectedPerson:state.person?.id});void setBadge(null);},
    onPing:async(row)=>{if((await companionStore.get())?.deviceId!==identity)return;
     const permission=chrome.notifications.getPermissionLevel?await chrome.notifications.getPermissionLevel():'granted';
     if(permission!=='granted'){pingError='Chrome notifications are blocked. Allow Pulse notifications in browser settings.';return;}
