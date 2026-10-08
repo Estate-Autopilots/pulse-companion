@@ -14,12 +14,12 @@ On a Mac with Node from `.nvmrc`, Xcode and CocoaPods:
 corepack enable
 pnpm install --frozen-lockfile
 pnpm --filter @pulse/mobile exec expo prebuild --platform ios --clean
-xcodebuild -jobs 2 -workspace apps/mobile/ios/Pulse.xcworkspace -scheme Pulse -configuration Release -sdk iphonesimulator -destination 'generic/platform=iOS Simulator' -derivedDataPath build/ios-simulator CODE_SIGNING_ALLOWED=NO
+xcodebuild -jobs 2 -workspace apps/mobile/ios/Pulse.xcworkspace -scheme Pulse -configuration Release -sdk iphonesimulator -destination 'generic/platform=iOS Simulator' -derivedDataPath build/ios-simulator CODE_SIGNING_ALLOWED=YES CODE_SIGN_IDENTITY=- CODE_SIGNING_REQUIRED=NO
 xcodebuild -jobs 2 -workspace apps/mobile/ios/Pulse.xcworkspace -scheme Pulse -configuration Release -sdk iphoneos -destination 'generic/platform=iOS' -derivedDataPath build/ios-device CODE_SIGNING_ALLOWED=NO
 ```
 
-For simulator installation, use the local ad-hoc signing and entitlement steps in the build workflow. The app needs
-its application identifier and Keychain group; the widget and app share `group.com.pulse.work.mobile`. No Apple
+For simulator installation, let Xcode generate the simulated entitlements and local ad-hoc signature as above.
+Do not pass restricted iOS Keychain or App Group entitlements to a manual macOS codesign command. No Apple
 account is used for simulator signing. The app requests no Associated Domains entitlement. The normal iOS
 confirmation when opening a custom `pulse://` link is an operating-system prompt.
 

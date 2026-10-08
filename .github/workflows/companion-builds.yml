@@ -147,17 +147,7 @@ jobs:
             adb shell pm grant com.pulse.work.mobile android.permission.POST_NOTIFICATIONS || true
             adb shell am start -W -n com.pulse.work.mobile/.MainActivity; sleep 12; adb exec-out screencap -p > screens/android-start.png
             adb shell dumpsys appwidget > screens/android-widget-providers.txt
-            for s in out in break done; do
-              adb shell am start -W -a android.intent.action.VIEW -d "pulse://demo?state=$s" com.pulse.work.mobile
-              sleep 6
-              adb exec-out screencap -p > screens/android-$s.png
-              if [ "$s" = in ] || [ "$s" = break ]; then
-                adb shell cmd statusbar expand-notifications
-                sleep 2
-                adb exec-out screencap -p > screens/android-ribbon-$s.png
-                adb shell cmd statusbar collapse
-              fi
-            done
+            for s in out in break done; do adb shell am start -W -a android.intent.action.VIEW -d "pulse://demo?state=$s" com.pulse.work.mobile; sleep 6; adb exec-out screencap -p > "screens/android-$s.png"; if [ "$s" = in ] || [ "$s" = break ]; then adb shell cmd statusbar expand-notifications; sleep 2; adb exec-out screencap -p > "screens/android-ribbon-$s.png"; adb shell cmd statusbar collapse; fi; done
             adb shell cmd uimode night yes; adb shell am start -W -a android.intent.action.VIEW -d "pulse://demo?state=in" com.pulse.work.mobile; sleep 6; adb exec-out screencap -p > screens/android-in-dark.png
       - uses: actions/upload-artifact@v7
         with:
@@ -185,25 +175,13 @@ jobs:
           workspace=$(find apps/mobile/ios -maxdepth 1 -name '*.xcworkspace' -print -quit)
           test -n "$workspace"
           scheme=$(basename "$workspace" .xcworkspace)
-          xcodebuild -jobs 2 -workspace "$workspace" -scheme "$scheme" -configuration Release -sdk iphonesimulator -destination 'generic/platform=iOS Simulator' -derivedDataPath "$RUNNER_TEMP/pulse-ios" CODE_SIGNING_ALLOWED=NO -quiet
+          xcodebuild -jobs 2 -workspace "$workspace" -scheme "$scheme" -configuration Release -sdk iphonesimulator -destination 'generic/platform=iOS Simulator' -derivedDataPath "$RUNNER_TEMP/pulse-ios" CODE_SIGNING_ALLOWED=YES CODE_SIGN_IDENTITY=- CODE_SIGNING_REQUIRED=NO -quiet
           app=$(find "$RUNNER_TEMP/pulse-ios/Build/Products" -maxdepth 2 -name '*.app' -print -quit)
           test -n "$app" && test -f "$app/Info.plist"
           /usr/libexec/PlistBuddy -c 'Print CFBundleIdentifier' "$app/Info.plist" | grep -qx com.pulse.work.mobile
-          # The Simulator needs a local ad-hoc signature for Keychain APIs; no Apple account is used.
-          cat > "$RUNNER_TEMP/pulse-simulator.entitlements" <<'PLIST'
-          <?xml version="1.0" encoding="UTF-8"?>
-          <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
-          <plist version="1.0"><dict><key>application-identifier</key><string>com.pulse.work.mobile</string><key>keychain-access-groups</key><array><string>com.pulse.work.mobile</string></array><key>get-task-allow</key><true/><key>com.apple.security.application-groups</key><array><string>group.com.pulse.work.mobile</string></array></dict></plist>
-          PLIST
-          for extension in "$app"/PlugIns/*.appex; do
-            test -d "$extension" || continue
-            extension_id=$(/usr/libexec/PlistBuddy -c 'Print CFBundleIdentifier' "$extension/Info.plist")
-            cp "$RUNNER_TEMP/pulse-simulator.entitlements" "$RUNNER_TEMP/widget.entitlements"
-            /usr/libexec/PlistBuddy -c "Set application-identifier $extension_id" "$RUNNER_TEMP/widget.entitlements"
-            /usr/libexec/PlistBuddy -c 'Delete keychain-access-groups' "$RUNNER_TEMP/widget.entitlements"
-            codesign --force --sign - --entitlements "$RUNNER_TEMP/widget.entitlements" "$extension"
-          done
-          codesign --force --sign - --entitlements "$RUNNER_TEMP/pulse-simulator.entitlements" "$app"
+          # Xcode embeds Simulator entitlements in __TEXT and signs locally; iOS restricted
+          # entitlements must not be passed to a manual macOS codesign invocation.
+          codesign --verify --deep --strict "$app"
           echo "IPHONE_APP=$app" >> "$GITHUB_ENV"
           ditto -c -k --keepParent "$app" "$RUNNER_TEMP/pulse-ios-simulator.zip"
       - uses: actions/upload-artifact@v7
