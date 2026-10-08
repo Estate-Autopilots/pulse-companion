@@ -6,9 +6,19 @@ module.exports=config=>withXcodeProject(config,config=>{
  const targets=project.pbxNativeTargetSection();
  const target=Object.entries(targets).find(([id,t])=>!id.endsWith('_comment')&&t.name?.replaceAll('"','')===targetName);
  if(!target)throw Error('Pulse iOS widget target is missing');
- const relative=`${targetName}/Pip.xcassets`;const dir=path.join(config.modRequest.platformProjectRoot,relative,'Pip.imageset');
- fs.mkdirSync(dir,{recursive:true});fs.copyFileSync(path.join(config.modRequest.projectRoot,'assets/adaptive-icon.png'),path.join(dir,'pip.png'));
- fs.writeFileSync(path.join(dir,'Contents.json'),JSON.stringify({images:[{filename:'pip.png',idiom:'universal'}],info:{author:'xcode',version:1}}));
+ // ActivityKit rejects oversized images even with resizable(); preserve point size with 1x/2x/3x variants.
+ // https://developer.apple.com/documentation/activitykit/displaying-live-data-with-live-activities
+ const relative=`${targetName}/Pip.xcassets`;
+ for(const [name,points] of [['Pip',48],['PipIsland',26]]){
+  const dir=path.join(config.modRequest.platformProjectRoot,relative,`${name}.imageset`);
+  fs.mkdirSync(dir,{recursive:true});
+  const images=[1,2,3].map(scale=>{
+   const filename=`pip-${points}@${scale}x.png`;
+   fs.copyFileSync(path.join(config.modRequest.projectRoot,'assets',filename),path.join(dir,filename));
+   return {filename,idiom:'universal',scale:`${scale}x`};
+  });
+  fs.writeFileSync(path.join(dir,'Contents.json'),JSON.stringify({images,info:{author:'xcode',version:1}}));
+ }
  const group=project.findPBXGroupKey({name:targetName});
  if(!group)throw Error('Pulse widget resource group is missing');
  // expo-widgets creates Sources/Frameworks but no Resources phase. Without one,

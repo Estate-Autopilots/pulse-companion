@@ -117,11 +117,12 @@ jobs:
           done
           "$RUNNER_TEMP/ios-screen-check" screens/ios-in-dark.png 'Take a break'
           "$RUNNER_TEMP/ios-screen-check" screens/ios-lock-screen.png 'checked in'
+          "$RUNNER_TEMP/ios-screen-check" screens/ios-island.png --pip-island
           xcrun simctl spawn "$udid" log show --last 5m --style compact --predicate 'process == "Pulse" OR eventMessage CONTAINS[c] "com.pulse.work.mobile"' > screens/surface-runtime.txt
           python3 - <<'PY'
           import hashlib,json,os
           r=json.load(open('screens/build-run.json'))
-          proof={'buildRun':str(r['id']),'buildCommit':r['head_sha'],'artifactName':os.environ['ARTIFACT_NAME'],'archiveSha256':hashlib.sha256(open('archive/pulse-ios-simulator.zip','rb').read()).hexdigest(),'signatureUnchanged':True,'screens':['start','out','in','break','done','in-dark'],'checks':['Xcode signature verified','Keychain startup clean','all four states reached through actual attendance buttons','native Open and warm URL delivery verified','all four states and dark verified'],'activityScreens':['ios-island.png','ios-lock-screen.png']}
+          proof={'buildRun':str(r['id']),'buildCommit':r['head_sha'],'artifactName':os.environ['ARTIFACT_NAME'],'archiveSha256':hashlib.sha256(open('archive/pulse-ios-simulator.zip','rb').read()).hexdigest(),'signatureUnchanged':True,'screens':['start','out','in','break','done','in-dark'],'checks':['Xcode signature verified','Keychain startup clean','all four states reached through actual attendance buttons','native Open and warm URL delivery verified','all four states and dark verified','native Pip colors verified in Dynamic Island'],'activityScreens':['ios-island.png','ios-lock-screen.png']}
           open('screens/acceptance.json','w').write(json.dumps(proof,indent=2)+'\n')
           PY
       - uses: actions/upload-artifact@v7
