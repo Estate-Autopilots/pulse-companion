@@ -40,3 +40,20 @@ test('iOS starts a Live Activity only during the working day',async()=>{
  const f=fixture('ios');await f.m.refreshNativeSurfaces(core.demoPayload('out'));assert.equal(f.started.length,0);
  await f.m.refreshNativeSurfaces(f.payload());assert.equal(f.started.length,1);assert.equal(f.started[0].active,true);
 });
+test('Pip asset belongs to the widget extension when Expo supplies no Resources phase',()=>{
+ const configPlugins=path.dirname(require.resolve('@expo/config-plugins',{paths:[path.dirname(require.resolve('expo'))]}));
+ const xcode=require(require.resolve('xcode',{paths:[configPlugins]}));
+ const project=xcode.project('fixture.pbxproj');
+ project.hash={project:{objects:{PBXNativeTarget:{M:{name:'Pulse',buildPhases:[{value:'R',comment:'Resources'}]},W:{name:'ExpoWidgetsTarget',buildPhases:[]}},PBXResourcesBuildPhase:{R:{isa:'PBXResourcesBuildPhase',files:[]},R_comment:'Resources'},PBXGroup:{G:{name:'ExpoWidgetsTarget',path:'ExpoWidgetsTarget',children:[]},G_comment:'ExpoWidgetsTarget'},PBXBuildFile:{},PBXFileReference:{}}}};
+ const plugin={exports:{}};
+ vm.runInNewContext(fs.readFileSync(path.resolve(__dirname,'../plugins/with-pip-widget.cjs'),'utf8'),{module:plugin,require:n=>n==='expo/config-plugins'?{withXcodeProject:(c,f)=>f(c)}:require(n)});
+ const dir=fs.mkdtempSync(path.join(require('node:os').tmpdir(),'pulse-widget-resources-'));
+ try{
+  const config={modResults:project,modRequest:{platformProjectRoot:dir,projectRoot:path.resolve(__dirname,'..')}};
+  plugin.exports(config);
+  assert.equal(project.pbxResourcesBuildPhaseObj('M').files.length,0,'Never put extension artwork in the main app');
+  assert.equal(project.pbxResourcesBuildPhaseObj('W').files.length,1);
+  assert.ok(fs.statSync(path.join(dir,'ExpoWidgetsTarget/Pip.xcassets/Pip.imageset/pip.png')).size>0);
+  plugin.exports(config);assert.equal(project.pbxResourcesBuildPhaseObj('W').files.length,1,'Prebuild remains idempotent');
+ }finally{fs.rmSync(dir,{recursive:true,force:true});}
+});

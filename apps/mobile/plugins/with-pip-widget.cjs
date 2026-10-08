@@ -11,6 +11,10 @@ module.exports=config=>withXcodeProject(config,config=>{
  fs.writeFileSync(path.join(dir,'Contents.json'),JSON.stringify({images:[{filename:'pip.png',idiom:'universal'}],info:{author:'xcode',version:1}}));
  const group=project.findPBXGroupKey({name:targetName});
  if(!group)throw Error('Pulse widget resource group is missing');
+ // expo-widgets creates Sources/Frameworks but no Resources phase. Without one,
+ // node-xcode falls back to the main app's Resources phase and Pip disappears.
+ if(!target[1].buildPhases.some(p=>p.comment==='Resources'))
+  project.addBuildPhase([],'PBXResourcesBuildPhase','Resources',target[0]);
  const file=project.addFile('Pip.xcassets',group);
  if(file){file.uuid=project.generateUuid();file.target=target[0];project.addToPbxBuildFileSection(file);project.addToPbxResourcesBuildPhase(file);}
  return config;

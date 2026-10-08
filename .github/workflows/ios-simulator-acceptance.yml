@@ -87,6 +87,8 @@ jobs:
           - takeScreenshot: ios-island
           - pressKey: Lock
           - pressKey: Lock
+          - tapOn: {text: '^Allow$', optional: true}
+          - assertVisible: "You’re checked in"
           - takeScreenshot: ios-lock-screen
           FLOW
           maestro --device "$udid" test --test-output-dir screens --debug-output screens/maestro screens/dark.yaml
@@ -96,6 +98,7 @@ jobs:
             if [ "$shot" != "screens/$name.png" ]; then cp "$shot" "screens/$name.png"; fi
           done
           "$RUNNER_TEMP/ios-screen-check" screens/ios-in-dark.png 'Take a break'
+          "$RUNNER_TEMP/ios-screen-check" screens/ios-lock-screen.png 'checked in'
           xcrun simctl spawn "$udid" log show --last 5m --style compact --predicate 'process == "Pulse" OR eventMessage CONTAINS[c] "com.pulse.work.mobile"' > screens/surface-runtime.txt
           python3 - <<'PY'
           import hashlib,json,os
