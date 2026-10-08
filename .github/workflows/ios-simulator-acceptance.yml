@@ -1,4 +1,4 @@
-name: Pulse iPhone simulator acceptance
+name: Verify built iPhone simulator
 on:
   workflow_dispatch:
     inputs:
@@ -33,27 +33,10 @@ jobs:
           if ! xcrun simctl launch "$udid" com.pulse.work.mobile > screens/original-launch.txt 2>&1; then
             xcrun simctl spawn "$udid" log show --last 3m --style compact --predicate 'process == "runningboardd" OR process == "SpringBoard" OR process == "amfid" OR process == "launchd_sim"' > screens/original-system-log.txt
           fi
-          # Signing an app bundle alone does not sign the embedded simulator frameworks/dylibs.
-          find "$app" -type f -name '*.dylib' -print0 | while IFS= read -r -d '' item; do codesign --force --sign - "$item"; done
-          find "$app" -type d -name '*.framework' -print0 | while IFS= read -r -d '' item; do codesign --force --sign - "$item"; done
-          cat > "$RUNNER_TEMP/pulse-recheck.entitlements" <<'PLIST'
-          <?xml version="1.0" encoding="UTF-8"?><!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd"><plist version="1.0"><dict><key>application-identifier</key><string>PULSESIM01.com.pulse.work.mobile</string><key>com.apple.developer.team-identifier</key><string>PULSESIM01</string><key>keychain-access-groups</key><array><string>PULSESIM01.com.pulse.work.mobile</string></array><key>get-task-allow</key><true/><key>com.apple.security.application-groups</key><array><string>group.com.pulse.work.mobile</string></array></dict></plist>
-          PLIST
-          for extension in "$app"/PlugIns/*.appex; do
-            extension_id=$(/usr/libexec/PlistBuddy -c 'Print CFBundleIdentifier' "$extension/Info.plist")
-            cp "$RUNNER_TEMP/pulse-recheck.entitlements" "$RUNNER_TEMP/widget-recheck.entitlements"
-            /usr/libexec/PlistBuddy -c "Set application-identifier PULSESIM01.$extension_id" "$RUNNER_TEMP/widget-recheck.entitlements"
-            /usr/libexec/PlistBuddy -c 'Delete keychain-access-groups' "$RUNNER_TEMP/widget-recheck.entitlements"
-            codesign --force --sign - --entitlements "$RUNNER_TEMP/widget-recheck.entitlements" "$extension"
-          done
-          codesign --force --sign - --entitlements "$RUNNER_TEMP/pulse-recheck.entitlements" "$app"
-          codesign --verify --deep --strict --verbose=4 "$app" > screens/corrected-verification.txt 2>&1
-          xcrun simctl uninstall "$udid" com.pulse.work.mobile
-          xcrun simctl install "$udid" "$app"
-          if ! xcrun simctl launch "$udid" com.pulse.work.mobile > screens/corrected-launch.txt 2>&1; then
-            xcrun simctl spawn "$udid" log show --last 3m --style compact --predicate 'process == "runningboardd" OR process == "SpringBoard" OR process == "amfid" OR process == "launchd_sim"' > screens/corrected-system-log.txt
-            exit 1
-          fi
+          # Xcode supplies the simulated __TEXT entitlements and local signature during build.
+          # This acceptance job never changes that signature or the packaged app.
+          test -s screens/original-launch.txt
+          grep -q 'com.pulse.work.mobile:' screens/original-launch.txt
           sleep 15
           xcrun simctl io "$udid" screenshot screens/ios-start.png
           swiftc apps/mobile/scripts/ios-screen-check.swift -o "$RUNNER_TEMP/ios-screen-check"
@@ -63,4 +46,4 @@ jobs:
         if: always()
         with: {name: 'ios-simulator-diagnostics-${{ github.run_id }}', path: screens/, if-no-files-found: error}
       - uses: actions/upload-artifact@v7
-        with: {name: 'ios-simulator-verified-${{ github.run_id }}', path: '${{ runner.temp }}/pulse-ios-simulator.zip', if-no-files-found: error}
+        with: {name: 'ios-simulator-accepted-${{ github.run_id }}', path: '${{ runner.temp }}/pulse-ios-simulator.zip', if-no-files-found: error}
