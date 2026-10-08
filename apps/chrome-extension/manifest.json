@@ -1,7 +1,7 @@
 {
   "manifest_version": 3,
   "name": "Pulse",
-  "version": "0.3.0",
+  "version": "0.3.1",
   "description": "Check in, take a break and check out in one click, with Pip, the Pulse bot. Optional work-context totals stay off unless you turn them on.",
   "permissions": [
     "storage",

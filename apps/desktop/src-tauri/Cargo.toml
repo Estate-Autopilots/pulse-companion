@@ -1,6 +1,6 @@
 [package]
 name = "pulse-desktop"
-version = "0.3.0"
+version = "0.3.1"
 description = "Pulse Companion: check in, take a break and check out from the tray"
 authors = ["Estate Autopilots"]
 edition = "2021"
@@ -20,6 +20,7 @@ tauri-plugin-autostart = "2.7.0"
 tauri-plugin-global-shortcut = "2.4.0"
 tauri-plugin-notification = "2.5.1"
 tauri-plugin-single-instance = "2.5.2"
+tauri-plugin-updater = "=2.13.2"
 reqwest = { version = "0.12", default-features = false, features = ["blocking", "json", "rustls-tls"] }
 url = "2"
 pulse-desktop-core = { path = "../core" }

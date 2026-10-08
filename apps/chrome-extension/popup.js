@@ -1,6 +1,8 @@
 // The toolbar popup: the same companion panel as the desktop app and the web widget. It only renders; every Pulse
 // call goes through the background worker (companion-worker.js).
 import { applyLocal, deriveView, prefsWith } from './shared/index.js';
+import { UpdateController, UPDATE_URL, parseManifest, newer } from './shared/updates.js';
+import { updateCard } from './shared/update-card.js';
 import { icon, mountPanel, renderConnect } from './shared/panel.js';
 
 const root = document.getElementById('app');
@@ -18,6 +20,21 @@ const panel = mountPanel(root, {
 });
 const now = () => Date.now() + (state.s?.day?.offset ?? 0);
 
+const updateContext = () => ({ signedIn: !!state.s?.signedIn, demo: !!state.s?.demo, busy: state.busy, pending: !!state.s?.day?.queued, payload: state.s?.day?.payload });
+const updates = new UpdateController({ check: async () => {
+  const response = await fetch(`${UPDATE_URL}/test/latest.json`);
+  if (response.status === 204) return null;
+  if (!response.ok) throw Error('Update check failed');
+  const found = parseManifest(await response.json());
+  return newer(found.version, chrome.runtime.getManifest().version) ? found : null;
+}, clock: () => now(), changed: () => render() });
+updates.laterUntil = Number(localStorage.getItem('pulse.updateLater') || 0);
+function showUpdate() {
+  const update = updates.offer(updateContext());
+  const zip = update?.files.find(f => f.platform === 'chrome' && f.kind === 'zip');
+  if (zip) updateCard(state.screen === 'settings' ? root.firstElementChild : root, { update, installLabel: 'Download update', hint: 'This is an unpacked extension. Unzip the download into your Pulse folder, then click Reload in chrome://extensions. Automatic installation starts after a Web Store listing is available.', onInstall: () => { if (updates.offer(updateContext())) void chrome.tabs.create({ url: zip.url }); }, onLater: () => { updates.later(); localStorage.setItem('pulse.updateLater', String(updates.laterUntil)); } });
+}
+
 function footer(text, button, onClick) {
   const f = document.createElement('div'); f.className = 'extra';
   f.append(Object.assign(document.createElement('span'), { textContent: text }));
@@ -28,7 +45,7 @@ function footer(text, button, onClick) {
 function render() {
   const s = state.s;
   const prefs = s?.prefs ?? prefsWith({});
-  if (!s || state.screen === 'settings') { if (s) renderSettings(prefs); return; }
+  if (!s || state.screen === 'settings') { if (s) { renderSettings(prefs); showUpdate(); } return; }
   if (!s.signedIn) {
     const pair = s.pair && s.pair.status === 'pending' ? s.pair : null;
     const model = pair ? { phase: 'code', code: pair.code, message: 'Waiting for your approval… you can close this popup.' }
@@ -50,6 +67,7 @@ function render() {
     mode: state.mode ?? p?.shift?.mode ?? 'office', showPip: prefs.mascot,
     tools: [{ id: 'settings', label: 'Settings', icon: 'settings' }, { id: 'close', label: 'Close', icon: 'close' }],
   });
+  showUpdate();
 }
 function renderSettings(prefs) {
   const wrap = document.createElement('section'); wrap.className = 'settings'; wrap.setAttribute('aria-label', 'Pulse settings');
@@ -66,6 +84,10 @@ function renderSettings(prefs) {
     input.addEventListener('change', () => { prefs = prefsWith({ ...prefs, [key]: input.checked }); state.s.prefs = prefs; void ask({ op: 'prefs', prefs }); });
     row.append(input); wrap.append(row);
   };
+  h('Updates');
+  const check = Object.assign(document.createElement('button'), { type: 'button', textContent: 'Check for updates', disabled: updates.running || !state.s?.signedIn || !!state.s?.demo });
+  check.addEventListener('click', () => void updates.poll(updateContext(), true));
+  wrap.append(check, Object.assign(document.createElement('p'), { className: 'muted', textContent: updates.status || 'Test channel · checks every four hours' }));
   h('Reminders');
   toggle('Check in when my shift starts', 'checkIn');
   toggle(`Back from a break (after ${prefs.breakMinutes} min)`, 'breakBack');
@@ -102,7 +124,9 @@ function renderSettings(prefs) {
 
 async function load(force = false) {
   try { state.s = await ask({ op: 'state', force }); } catch (e) { state.s = { signedIn: false, prefs: prefsWith({}) }; state.connect = { phase: 'error', message: e.message }; }
+  if (!state.s?.signedIn || state.s?.demo) updates.reset();
   render();
+  void updates.poll(updateContext());
 }
 async function pair_() {
   state.connect = { phase: 'start', busy: true, message: 'Opening Pulse in a new tab…' }; render();
@@ -127,3 +151,5 @@ async function act(id) {
 setInterval(() => { if (state.screen === 'day' && state.s?.day) panel.tick(deriveView(state.s.day.payload, now(), { celebrate: state.celebrate })); }, 1000);
 setInterval(() => { if (state.s && !state.s.signedIn && state.s.pair) void load(); }, 3000);
 void load(true);
+
+setInterval(() => { void updates.poll(updateContext()); render(); }, 60000);

@@ -6,7 +6,7 @@ import { fileURLToPath } from 'node:url';
 import { join, relative } from 'node:path';
 const root = fileURLToPath(new URL('..', import.meta.url));
 const out = process.argv[2] ?? 'pulse-chrome.zip';
-const SKIP = new Set(['scripts', 'test', 'node_modules', 'package.json', 'README.md']);
+const SKIP = new Set(['scripts', 'test', 'node_modules', 'package.json', 'README.md', 'STORE.md']);
 async function walk(dir) {
   const files = [];
   for (const e of await readdir(dir, { withFileTypes: true })) {

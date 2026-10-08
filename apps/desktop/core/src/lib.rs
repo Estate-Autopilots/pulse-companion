@@ -1,3 +1,5 @@
+pub mod update_signature;
+pub mod update_recovery;
 pub mod bridge;
 pub mod release;
 pub mod sensors;

@@ -14,6 +14,8 @@ import {Pip} from './src/pip';
 import {refreshWidget} from './src/widget';
 import {refreshNativeSurfaces,handleRibbonEvent} from './src/native-surfaces';
 import notifee from '@notifee/react-native';
+import {UpdateController,canOfferUpdate} from '../../packages/companion/src/updates.js';
+import {appVersion,checkUpdates,prepareUpdate,installUpdate,canInstallUpdate,openInstallPermission} from './src/updates';
 const tabs=['Today','My desk','Tasks','Chats','People','Projects'] as const;
 type Tab=typeof tabs[number];
 const paths:Record<Tab,string>={'Today':'intelligence?surface=dashboard','My desk':'hr/self','Tasks':'delivery','Chats':'chats','People':'people','Projects':'projects?scope=all'};
@@ -35,6 +37,29 @@ function Pulse(){
  const [suggestion,setSuggestion]=useState<{decision:PresenceDecision;body:Record<string,unknown>}|null>(null),[demo,setDemo]=useState<CompanionPayload|null>(null);
  const [widgetLink,setWidgetLink]=useState<{action:ActionId;entry:string;state:string}|null>(null);
  const handled=useRef(new Set<string>());
+ const updateOffset=useRef(0);updateOffset.current=day?.offset??0;
+ const [,updatePaint]=useState(0);const updateFile=useRef('');const waitingPermission=useRef(false);
+ const updateState=useRef({signedIn:false,demo:false,busy:false,pending:false,payload:null as CompanionPayload|null});
+ updateState.current={signedIn:!!me&&!me.mustChange&&currentPerson()===me.person,demo:!!demo,busy,pending:!!widgetLink||!!suggestion,payload:day?.payload??null};
+ const updateController=useRef<UpdateController|null>(null);
+ if(!updateController.current)updateController.current=new UpdateController({check:checkUpdates,clock:()=>Date.now()+updateOffset.current,prepare:async found=>{updateFile.current=await prepareUpdate(found);},changed:()=>updatePaint(n=>n+1)});
+ const updater=updateController.current;
+ async function applyUpdate(){
+  if(!updater.offer(updateState.current))return;
+  setBusy(true);
+  try{
+   const result=await installUpdate(updateFile.current);
+   if(result==='permission')Alert.alert('Allow Pulse to install its update','Android needs your permission the first time. Turn on “Allow from this source” for Pulse, then return here. Android will ask you to confirm installation.',[{text:'Later'},{text:'Open Android settings',onPress:()=>{waitingPermission.current=true;void openInstallPermission().catch(e=>setError(e.message));}}]);
+  }catch(e){setError((e as Error).message);}finally{setBusy(false);}
+ }
+ useEffect(()=>{
+  updater.reset();updateFile.current='';waitingPermission.current=false;
+  if(!me||me.mustChange)return;
+  void updater.poll(updateState.current);
+  const timer=setInterval(()=>{void updater.poll(updateState.current);updatePaint(n=>n+1);},60000);
+  const sub=AppState.addEventListener('change',s=>{if(s!=='active')return;void updater.poll(updateState.current);if(waitingPermission.current&&canOfferUpdate(updateState.current))void canInstallUpdate().then(allowed=>{if(allowed){waitingPermission.current=false;void applyUpdate();}});});
+  return()=>{clearInterval(timer);sub.remove();updater.reset();};
+ },[me?.person]);
  async function act(fn:()=>Promise<void>){setBusy(true);setError('');try{await fn();}catch(e){setError((e as Error).message);if([401,403].includes((e as {status?:number}).status??0))setData(null);}finally{setBusy(false);}}
  async function refresh(){if(tab==='Today'&&!data){const old=await cached(paths.Today);if(old)setData(old.data);}const old=await cached(paths[tab]);if(old){setData(old.data);setStamp(`As of ${new Date(old.at).toLocaleTimeString()}`);}const r=await load(paths[tab]);setData(r.data);setStamp(`${r.offline?'Offline · ':''}As of ${new Date(r.at).toLocaleTimeString()}`);}
  const refreshDay=useCallback(async(opts:{schedule?:boolean;here?:boolean}={})=>{
@@ -46,7 +71,7 @@ function Pulse(){
   if(opts.schedule)await scheduleReminders(d.payload,p).catch(()=>{});
   if(opts.here&&!d.offline){const here=await checkHere(d.payload).catch(()=>null);if(here&&here.decision.kind==='suggest-check-in')setSuggestion({decision:here.decision,body:{via:'mobile',trigger:'suggested',mode:here.decision.mode,place:{kind:here.signal.place.kind,id:here.signal.place.placeId,signal:here.signal.trigger==='wifi'?'wifi':'gps'}}});}
  },[]);
- async function connected(){const m=await enroll(Platform.OS);if(currentPerson()!==m.person)return;setMe(m);if(!m.mustChange){setPolicy(await request('devices/policy'));const d=await request('devices');const purposes=d.devices.find((x:any)=>x.id===device())?.purposes??[];setPermission(purposes.includes('shoot_presence'));await request(`devices/${device()}/health`,{health:'healthy',appVersion:'0.3.0',capabilities:{foreground_location:'unknown',background_location:'unknown',push:'unknown'}});await setupNotifications().catch(()=>{});const p=await readPrefs();setPrefs(p);await refreshDay({schedule:true,here:true});if(p.presence){const d=await loadDay().catch(()=>null);if(d)setPresence(await startPresence(d.payload).catch(()=>null));}}}
+ async function connected(){const m=await enroll(Platform.OS);if(currentPerson()!==m.person)return;setMe(m);if(!m.mustChange){setPolicy(await request('devices/policy'));const d=await request('devices');const purposes=d.devices.find((x:any)=>x.id===device())?.purposes??[];setPermission(purposes.includes('shoot_presence'));await request(`devices/${device()}/health`,{health:'healthy',appVersion,capabilities:{foreground_location:'unknown',background_location:'unknown',push:'unknown'}});await setupNotifications().catch(()=>{});const p=await readPrefs();setPrefs(p);await refreshDay({schedule:true,here:true});if(p.presence){const d=await loadDay().catch(()=>null);if(d)setPresence(await startPresence(d.payload).catch(()=>null));}}}
  // One tap on the card, a suggestion, a widget-like notification button: same rules as My desk.
  async function companion(id:ActionId,extra:Record<string,unknown>={}){
   if(demo){const p={...applyLocal(demo,id,Date.now(),{mode,...extra}),pending:false};setDemo(p);void refreshNativeSurfaces(p,prefs??undefined).catch(()=>{});refreshWidget(p);setStatus({text:'Demo · nothing is saved',tone:'success'});if(id==='check-in'){setCelebrate(true);setTimeout(()=>setCelebrate(false),4000);}void Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success).catch(()=>{});return;}
@@ -90,6 +115,9 @@ function Pulse(){
  const today=(demo||(me&&!me.mustChange))?<>
   {suggestion&&!demo?<Suggestion decision={suggestion.decision} theme={theme} onAct={id=>{const b=suggestion.body;setSuggestion(null);void companion(id,id==='check-in'?b:{via:'mobile',trigger:'suggested'});}} onDismiss={()=>setSuggestion(null)}/>:null}
   <TodayCard payload={shownDay} offset={demo?0:day?.offset??0} theme={theme} dark={dark} busy={busy} status={status} mode={mode} onMode={setMode} onAct={id=>void companion(id)} onOpen={open} celebrate={celebrate} showPip={prefs?.mascot??true}/>
+  {updater.offer(updateState.current)?card('update',<><Pip mood="waking" size={48} dark={dark}/>{text(`A new Pulse is ready — what's new: ${updater.candidate.notes}`)}<Button label="Install update" onPress={()=>void applyUpdate()}/><Button primary={false} label="Later" onPress={()=>updater.later()}/></>):null}
+  {Platform.OS==='android'&&!demo?card('update-settings',<>{text('Settings → Updates · test channel')}<Button primary={false} label="Check for updates" onPress={()=>void updater.poll(updateState.current,true)}/>{muted(updater.status)}</>):null}
+  {Platform.OS==='ios'&&!demo?muted('iPhone updates will arrive through TestFlight once Apple access is connected.'):null}
   {prefs&&!demo?<CompanionSettings prefs={prefs} payload={shownDay} presence={presence} theme={theme} onPrefs={p=>void changePrefs(p)}/>:null}
   {demo?card('demo',<>{text('This is a demo day with made-up times.')}{muted('Sign in with your Pulse account to check in for real.')}<Button label="Leave the demo" onPress={()=>{setDemo(null);setStatus(null);}}/></>):null}
  </>:null;

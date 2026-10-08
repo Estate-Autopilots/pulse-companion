@@ -1,0 +1,1 @@
+Pip can offer verified Pulse updates. Download in the background, choose Install and restart, and keep your sign-in and saved taps. Android updates open the system installer; Chrome offers a fresh extension download.
