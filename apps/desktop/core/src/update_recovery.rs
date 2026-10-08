@@ -48,6 +48,7 @@ impl Journal {
     }
 }
 pub fn copy_tree(from: &Path, to: &Path) -> io::Result<()> {
+    if to == from || to.starts_with(from) { return Err(io::Error::other("Recovery backup must be outside the installation")); }
     fs::create_dir_all(to)?;
     for entry in fs::read_dir(from)? {
         let entry = entry?; let source = entry.path(); let target = to.join(entry.file_name());
@@ -97,7 +98,13 @@ pub fn supervise(path: &Path) -> io::Result<()> {
             if child.try_wait()?.is_none() { let _ = child.kill(); let _ = child.wait(); }
             if fs::read_to_string(&probe).is_ok_and(|v| v == journal.target) { break; }
         }
-        if Instant::now() > deadline { journal.stage = "install-failed".into(); journal.save(path)?; return Ok(()); }
+        if Instant::now() > deadline {
+            // A completely unlaunchable replacement cannot produce a version receipt. Preserve the failed
+            // installation and restore the saved app rather than leaving the user with a closed, broken app.
+            journal.stage = "install-failed".into(); journal.save(path)?;
+            journal.restore(path)?; command(&exe).arg("--update-recovered").spawn()?;
+            return Ok(());
+        }
     }
     for attempt in 1..=2 {
         journal.stage = "starting".into(); journal.attempts = attempt; journal.save(path)?;
@@ -119,6 +126,12 @@ mod tests {
     fn journal() -> Journal { Journal { previous:"0.3.1".into(),target:"0.3.2".into(), install:"/tmp/pulse-install".into(),backup:"/tmp/pulse-backup".into(),relative_exe:"pulse".into(),stage:"starting".into(),attempts:0 } }
     #[test] fn two_failed_starts_required() { let mut j=journal();j.attempts=1;assert!(!j.failed_twice());j.attempts=2;assert!(j.failed_twice());assert!(!j.acknowledge("0.3.1"));assert!(j.acknowledge("0.3.2"));assert!(!j.failed_twice()); }
     #[test] fn backup_must_be_outside_install_and_relative_exe_safe() { let mut j=journal();j.backup=j.install.join("backup");assert!(j.validate().is_err());j=journal();j.relative_exe="../someone-else".into();assert!(j.validate().is_err()); }
+    #[test] fn copy_rejects_a_nested_backup_before_creating_it() {
+        let root=std::env::temp_dir().join(format!("pulse-nested-backup-test-{}",uuid::Uuid::new_v4()));
+        fs::create_dir_all(&root).unwrap();fs::write(root.join("pulse"),b"working-app").unwrap();
+        assert!(copy_tree(&root,&root.join("previous")).is_err());
+        assert!(!root.join("previous").exists());assert_eq!(fs::read(root.join("pulse")).unwrap(),b"working-app");
+    }
     #[test] fn rollback_restores_previous_app_and_retains_failed_app_and_user_queue() {
         let root=std::env::temp_dir().join(format!("pulse-recovery-test-{}",uuid::Uuid::new_v4()));fs::create_dir_all(&root).unwrap();
         let mut j=journal();j.install=root.join("installed");j.backup=root.join("previous");j.attempts=2;
