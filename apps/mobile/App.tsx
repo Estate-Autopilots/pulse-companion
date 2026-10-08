@@ -8,7 +8,7 @@ import NetInfo from '@react-native-community/netinfo';
 import * as Notifications from 'expo-notifications';
 import {applyLocal,celebration,clockOffset,demoPayload,type ActionId,type CompanionPayload,type CompanionState,type Mode,type Prefs,type PresenceDecision} from '../../packages/companion/src/index.js';
 import {cached,currentPerson,currentIdentity,pause,resume,subscribeChats,consent,device,enroll,flush,init,load,queueShoot,request,signIn,finishSignIn,signOut,uuid,within,pairStart,pairPoll,pairCancel,type Identity} from './src/client';
-import {act as companionAct,checkHere,flushQueue,loadDay,readPrefs,responseAction,scheduleReminders,setupNotifications,startPresence,stopPresence,writePrefs,type PresenceStatus} from './src/companion';
+import {act as companionAct,attendanceInProgress,observeAttendance,checkHere,flushQueue,loadDay,readPrefs,responseAction,scheduleReminders,setupNotifications,startPresence,stopPresence,writePrefs,type PresenceStatus} from './src/companion';
 import {CompanionSettings,Suggestion,TodayCard} from './src/today';
 import {Pip} from './src/pip';
 import {refreshWidget} from './src/widget';
@@ -40,12 +40,13 @@ function Pulse(){
  const updateOffset=useRef(0);updateOffset.current=day?.offset??0;
  const [,updatePaint]=useState(0);const updateFile=useRef('');const waitingPermission=useRef(false);
  const updateState=useRef({signedIn:false,demo:false,busy:false,pending:false,payload:null as CompanionPayload|null});
- updateState.current={signedIn:!!me&&!me.mustChange&&currentPerson()===me.person,demo:!!demo,busy,pending:!!widgetLink||!!suggestion,payload:day?.payload??null};
+ updateState.current={signedIn:!!me&&!me.mustChange&&currentPerson()===me.person,demo:!!demo,busy,pending:!!widgetLink||!!suggestion||attendanceInProgress(),payload:day?.payload??null};
  const updateController=useRef<UpdateController|null>(null);
  if(!updateController.current)updateController.current=new UpdateController({check:checkUpdates,clock:()=>Date.now()+updateOffset.current,prepare:async found=>{updateFile.current=await prepareUpdate(found);},changed:()=>updatePaint(n=>n+1)});
  const updater=updateController.current;
+ useEffect(()=>observeAttendance(()=>updatePaint(n=>n+1)),[]);
  async function applyUpdate(){
-  if(!updater.offer(updateState.current))return;
+  if(attendanceInProgress()||!updater.offer(updateState.current))return;
   setBusy(true);
   try{
    const result=await installUpdate(updateFile.current);
@@ -115,7 +116,7 @@ function Pulse(){
  const today=(demo||(me&&!me.mustChange))?<>
   {suggestion&&!demo?<Suggestion decision={suggestion.decision} theme={theme} onAct={id=>{const b=suggestion.body;setSuggestion(null);void companion(id,id==='check-in'?b:{via:'mobile',trigger:'suggested'});}} onDismiss={()=>setSuggestion(null)}/>:null}
   <TodayCard payload={shownDay} offset={demo?0:day?.offset??0} theme={theme} dark={dark} busy={busy} status={status} mode={mode} onMode={setMode} onAct={id=>void companion(id)} onOpen={open} celebrate={celebrate} showPip={prefs?.mascot??true}/>
-  {updater.offer(updateState.current)?card('update',<><Pip mood="waking" size={48} dark={dark}/>{text(`A new Pulse is ready — what's new: ${updater.candidate.notes}`)}<Button label="Install update" onPress={()=>void applyUpdate()}/><Button primary={false} label="Later" onPress={()=>updater.later()}/></>):null}
+  {updater.offer(updateState.current)?card('update',<>{prefs?.mascot!==false?<Pip mood="waking" size={48} dark={dark}/>:null}{text(`A new Pulse is ready — what's new: ${updater.candidate.notes}`)}<Button label="Install update" onPress={()=>void applyUpdate()}/><Button primary={false} label="Later" onPress={()=>updater.later()}/></>):null}
   {Platform.OS==='android'&&!demo?card('update-settings',<>{text('Settings → Updates · test channel')}<Button primary={false} label="Check for updates" onPress={()=>void updater.poll(updateState.current,true)}/>{muted(updater.status)}</>):null}
   {Platform.OS==='ios'&&!demo?muted('iPhone updates will arrive through TestFlight once Apple access is connected.'):null}
   {prefs&&!demo?<CompanionSettings prefs={prefs} payload={shownDay} presence={presence} theme={theme} onPrefs={p=>void changePrefs(p)}/>:null}

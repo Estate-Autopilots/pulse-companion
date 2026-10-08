@@ -9,8 +9,8 @@ module.exports=config=>{
   return c;
  });
  config=withMainApplication(config,c=>{
-  const marker='packages.add(PulseInstallerPackage())';
-  if(!c.modResults.contents.includes(marker))c.modResults.contents=c.modResults.contents.replace(/(val packages = PackageList\(this\)\.packages)/,'$1').replace(/(PackageList\(this\)\.packages\.apply\s*\{)/,'$1\n          '+marker);
+  const marker='add(PulseInstallerPackage())';
+  if(!c.modResults.contents.includes(marker))c.modResults.contents=c.modResults.contents.replace(/(PackageList\(this\)\.packages\.apply\s*\{)/,'$1\n          '+marker);
   if(!c.modResults.contents.includes(marker))throw Error('Expo MainApplication package hook changed');
   return c;
  });

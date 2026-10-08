@@ -74,7 +74,7 @@ function render() {
     });
   }
   const update = updates.offer(updateContext());
-  if (update) updateCard(state.screen === 'settings' ? root.firstElementChild : root, { update, onInstall: () => void installUpdate(), onLater: () => { updates.later(); store.set('updateLater', updates.laterUntil); } });
+  if (update) updateCard(state.screen === 'settings' ? root.firstElementChild : root, { update, showPip: state.prefs.mascot, onInstall: () => void installUpdate(), onLater: () => { updates.later(); store.set('updateLater', updates.laterUntil); } });
   fit();
 }
 function tick() {

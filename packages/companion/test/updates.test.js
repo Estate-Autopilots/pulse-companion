@@ -1,5 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
+import {execFileSync} from 'node:child_process';
+import {fileURLToPath} from 'node:url';
 import { canOfferUpdate, channel, newer, parseManifest, UpdateController, UPDATE_INTERVAL } from '../src/updates.js';
 const url='https://github.com/Estate-Autopilots/pulse-companion/releases/download/companion-v0.3.2-abc123/Pulse.exe';
 const fixture=()=>({version:'0.3.2',channel:'test',notes:'Chat arrives',platforms:{'windows-x86_64':{url,signature:'signature'}},files:[{name:'Pulse.exe',platform:'windows',url,size:100,sha256:'a'.repeat(64)}]});
@@ -27,4 +29,9 @@ test('waits for preparation; later persists for hours; no concurrent poll; logou
 test('failed download never produces an install offer and can retry on demand',async()=>{
  let fail=true;const c=new UpdateController({check:async()=>fixture(),prepare:async()=>{if(fail)throw Error('bad signature');}});
  await c.poll(context);assert.equal(c.candidate,null);fail=false;await c.poll(context,true);assert.ok(c.candidate);
+});
+
+test('release signing gate refuses publication when signing configuration is absent',()=>{
+ const root=fileURLToPath(new URL('../../../',import.meta.url));
+ assert.throws(()=>execFileSync(process.execPath,['apps/desktop/scripts/check-release.mjs'],{cwd:root,stdio:'pipe',env:{...process.env,TAURI_SIGNING_PRIVATE_KEY:'',ANDROID_SIGNING_STORE_BASE64:'',ANDROID_SIGNING_PASSWORD:''}}),error=>/Updater public key is not provisioned|Missing Actions secret/.test(error.stderr.toString()));
 });

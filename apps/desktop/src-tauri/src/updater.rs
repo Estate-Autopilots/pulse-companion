@@ -33,9 +33,10 @@ pub async fn update_check(app: AppHandle, channel: String) -> Result<Value, Stri
     let updates = app.state::<Updates>(); let mut slot = updates.0.lock().await;
     *slot = None;
     let updater = app.updater_builder().endpoints(vec![endpoint(&channel)?]).map_err(err)?.timeout(Duration::from_secs(30)).restart_after_install(false).build().map_err(err)?;
-    let Some(update) = updater.check().await.map_err(err)? else { return Ok(Value::Null) };
+    let Some(mut update) = updater.check().await.map_err(err)? else { return Ok(Value::Null) };
     if !valid_manifest(&update, &channel) { return Err("Pulse rejected an invalid update manifest".into()); }
     if blocked(&app, &update.version) { return Err("That update did not start correctly. Waiting for a newer Pulse.".into()); }
+    update.timeout = Some(Duration::from_secs(300));
     let info = json!({"version":update.version,"notes":update.body,"channel":channel});
     *slot = Some(Pending { update, bytes: None, device: device(&app) });
     Ok(info)
@@ -131,7 +132,8 @@ pub fn hosted_acceptance(app: &AppHandle) {
     tauri::async_runtime::spawn(async move {
         let result: Result<(), String> = async {
             let updater = app.updater_builder().endpoints(vec![endpoint]).map_err(err)?.restart_after_install(false).timeout(Duration::from_secs(60)).build().map_err(err)?;
-            let update = updater.check().await.map_err(err)?.ok_or("No newer update")?;
+            let mut update = updater.check().await.map_err(err)?.ok_or("No newer update")?;
+            update.timeout = Some(Duration::from_secs(300));
             if !valid_manifest(&update,"test") { return Err("Acceptance manifest invalid".into()); }
             proof_receipt("detected.json", &json!({"previous":env!("CARGO_PKG_VERSION"),"target":update.version}))?;
             let bytes = update.download(|_,_|{},||{}).await.map_err(err)?;

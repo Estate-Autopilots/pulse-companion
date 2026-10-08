@@ -32,7 +32,7 @@ updates.laterUntil = Number(localStorage.getItem('pulse.updateLater') || 0);
 function showUpdate() {
   const update = updates.offer(updateContext());
   const zip = update?.files.find(f => f.platform === 'chrome' && f.kind === 'zip');
-  if (zip) updateCard(state.screen === 'settings' ? root.firstElementChild : root, { update, installLabel: 'Download update', hint: 'This is an unpacked extension. Unzip the download into your Pulse folder, then click Reload in chrome://extensions. Automatic installation starts after a Web Store listing is available.', onInstall: () => { if (updates.offer(updateContext())) void chrome.tabs.create({ url: zip.url }); }, onLater: () => { updates.later(); localStorage.setItem('pulse.updateLater', String(updates.laterUntil)); } });
+  if (zip) updateCard(state.screen === 'settings' ? root.firstElementChild : root, { update, showPip: state.s?.prefs?.mascot !== false, installLabel: 'Download update', hint: 'This is an unpacked extension. Unzip the download into your Pulse folder, then click Reload in chrome://extensions. Automatic installation starts after a Web Store listing is available.', onInstall: () => { if (updates.offer(updateContext())) void chrome.tabs.create({ url: zip.url }); }, onLater: () => { updates.later(); localStorage.setItem('pulse.updateLater', String(updates.laterUntil)); } });
 }
 
 function footer(text, button, onClick) {

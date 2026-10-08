@@ -53,12 +53,19 @@ export async function loadDay(): Promise<{ payload: CompanionPayload; offline: b
 
 /** One tap. Offline (or the outer gate) keeps it in the queue with its original time. */
 let attendanceWork: Promise<unknown> = Promise.resolve();
+let attendancePending = 0;
+const attendanceObservers = new Set<() => void>();
+export const attendanceInProgress = () => attendancePending > 0;
+export function observeAttendance(listener: () => void) { attendanceObservers.add(listener); return () => { attendanceObservers.delete(listener); }; }
+function attendanceChanged() { for (const listener of attendanceObservers) { try { listener(); } catch { /* update UI must not interrupt attendance */ } } }
 function sameSession(expected: number) {
   if (sessionGeneration() !== expected) throw Error('Your sign-in changed. Try again in the current workspace.');
 }
 function inOrder<T>(work: (expected: number) => Promise<T>): Promise<T> {
   const expected = sessionGeneration();
-  const run = attendanceWork.catch(() => {}).then(() => { sameSession(expected); return work(expected); });
+  attendancePending++; attendanceChanged();
+  const run = attendanceWork.catch(() => {}).then(() => { sameSession(expected); return work(expected); })
+    .finally(() => { attendancePending--; attendanceChanged(); });
   attendanceWork = run;
   return run;
 }

@@ -248,6 +248,7 @@ jobs:
           path: ${{ runner.temp }}/pulse-ios-simulator.zip
           if-no-files-found: error
   ios-screens:
+    if: ${{ !inputs.validation_only }}
     needs: ios-simulator
     uses: ./.github/workflows/ios-simulator-acceptance.yml
     with:
