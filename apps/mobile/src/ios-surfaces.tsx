@@ -33,7 +33,7 @@ const WorkingDay = (p:DaySurface, env:LiveActivityEnvironment) => {
         <HStack spacing={12}>{p.actions.map(a=><Link key={a.id} label={a.label} destination={`pulse://attendance?action=${a.id}&entry=${p.entryId}&state=${p.state}`} modifiers={[foregroundStyle(accent)]}/>)}</HStack>
       </VStack>
     </HStack>,
-    compactLeading:p.showPip?<Image assetName="Pip" modifiers={[resizable(),frame({width:26,height:26})]}/>:<Text>Pulse</Text>,
+    compactLeading:p.showPip?<Image assetName="PipIsland" modifiers={[resizable(),frame({width:26,height:26})]}/>:<Text>Pulse</Text>,
     compactTrailing:p.timerSince!==null?<Text date={new Date(p.timerSince)} dateStyle="timer"/>:<Text>Pulse</Text>,
     minimal:<Text>{p.state==='break'?'Ⅱ':'●'}</Text>,
     expandedLeading:<Text modifiers={[foregroundStyle(color)]}>{p.title}</Text>,

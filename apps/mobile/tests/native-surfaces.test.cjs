@@ -53,7 +53,17 @@ test('Pip asset belongs to the widget extension when Expo supplies no Resources 
   plugin.exports(config);
   assert.equal(project.pbxResourcesBuildPhaseObj('M').files.length,0,'Never put extension artwork in the main app');
   assert.equal(project.pbxResourcesBuildPhaseObj('W').files.length,1);
-  assert.ok(fs.statSync(path.join(dir,'ExpoWidgetsTarget/Pip.xcassets/Pip.imageset/pip.png')).size>0);
+  for(const [name,points] of [['Pip',48],['PipIsland',26]]){
+   const imageset=path.join(dir,`ExpoWidgetsTarget/Pip.xcassets/${name}.imageset`);
+   const {images}=JSON.parse(fs.readFileSync(path.join(imageset,'Contents.json'),'utf8'));
+   assert.equal(images.length,3);
+   for(const image of images){
+    const png=fs.readFileSync(path.join(imageset,image.filename));
+    const expected=points*parseInt(image.scale,10);
+    assert.equal(png.readUInt32BE(16),expected,'WidgetKit image must have its actual presentation pixel size');
+    assert.equal(png.readUInt32BE(20),expected);
+   }
+  }
   plugin.exports(config);assert.equal(project.pbxResourcesBuildPhaseObj('W').files.length,1,'Prebuild remains idempotent');
  }finally{fs.rmSync(dir,{recursive:true,force:true});}
 });
