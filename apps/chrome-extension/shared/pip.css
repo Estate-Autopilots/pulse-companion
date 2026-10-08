@@ -1,0 +1,102 @@
+/* Pip, the Pulse bot. Motion is small and slow (never distracting) and stops entirely for reduced motion. */
+.pip {
+  --pip-a: #8a76f5; --pip-b: #5b45d6; --pip-arm: #4a35c0; --pip-face: #1d1842; --pip-eye: #8ff0d2;
+  --pip-cheek: #ff8fb1; --pip-shadow: rgba(24, 20, 60, .16); --pip-cup: #ffffff; --pip-cup-line: #4a35c0;
+  --pip-steam: #9b98b8; --pip-z: #7a68e6;
+  display: block; overflow: visible; flex: none;
+}
+:root[data-theme="dark"] .pip {
+  --pip-a: #9d8cff; --pip-b: #6a55e6; --pip-arm: #5a46d4; --pip-face: #100d26; --pip-shadow: rgba(0, 0, 0, .45);
+  --pip-cup: #eeeef6; --pip-cup-line: #a99cff; --pip-steam: #8d8aa8; --pip-z: #b8adff;
+}
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) .pip {
+    --pip-a: #9d8cff; --pip-b: #6a55e6; --pip-arm: #5a46d4; --pip-face: #100d26; --pip-shadow: rgba(0, 0, 0, .45);
+    --pip-cup: #eeeef6; --pip-cup-line: #a99cff; --pip-steam: #8d8aa8; --pip-z: #b8adff;
+  }
+}
+.pip * { transform-box: fill-box; transform-origin: center; }
+.pip .pip-stop-a { stop-color: var(--pip-a); }
+.pip .pip-stop-b { stop-color: var(--pip-b); }
+.pip .pip-shadow { fill: var(--pip-shadow); }
+.pip .pip-bob { transform-box: view-box; transform-origin: 60px 90px; }
+.pip .pip-stalk { stroke: var(--pip-arm); stroke-width: 3.5; stroke-linecap: round; fill: none; }
+.pip .pip-glow { opacity: 0; }
+.pip .pip-arm { fill: var(--pip-arm); }
+.pip .pip-arm-r { transform-origin: 50% 8%; }
+.pip .pip-face { fill: var(--pip-face); }
+.pip .pip-eyes { fill: var(--pip-eye); }
+.pip .pip-lines path, .pip .pip-mouth { fill: none; stroke: var(--pip-eye); stroke-width: 3.4; stroke-linecap: round; }
+.pip .pip-mouth-o { fill: var(--pip-eye); }
+.pip .pip-cheek { fill: var(--pip-cheek); opacity: .55; }
+.pip .pip-mug { fill: var(--pip-cup); stroke: var(--pip-cup-line); stroke-width: 2; }
+.pip .pip-handle { fill: none; stroke: var(--pip-cup-line); stroke-width: 2.2; stroke-linecap: round; }
+.pip .pip-steam { fill: none; stroke: var(--pip-steam); stroke-width: 2; stroke-linecap: round; opacity: 0; }
+.pip .pip-zzz path { fill: none; stroke: var(--pip-z); stroke-width: 2.2; stroke-linecap: round; stroke-linejoin: round; opacity: 0; }
+
+/* Idle and checked in: a slow float and an occasional blink. */
+.pip .pip-bob { animation: pip-float 3.8s ease-in-out infinite; }
+.pip .pip-shadow { animation: pip-shadow 3.8s ease-in-out infinite; }
+.pip .pip-blink { animation: pip-blink 5.2s infinite; }
+/* Checked in: the antenna beats like a calm pulse. */
+.pip[data-mood="in"] .pip-bulb { animation: pip-beat 1.6s ease-in-out infinite; }
+.pip[data-mood="in"] .pip-glow { animation: pip-ring 1.6s ease-out infinite; }
+/* Waking up: a stretch and a yawn. */
+.pip[data-mood="waking"] .pip-bob { animation: pip-stretch 3.2s ease-in-out infinite; }
+.pip[data-mood="waking"] .pip-arm { animation: pip-arms-up 3.2s ease-in-out infinite; }
+.pip[data-mood="waking"] .pip-bulb { animation: pip-dawn 3.2s ease-in-out infinite; }
+/* Break: slower float, steam from the cup. */
+.pip[data-mood="break"] .pip-bob { animation-duration: 5.5s; }
+.pip[data-mood="break"] .pip-steam { animation: pip-steam 2.6s ease-out infinite; }
+.pip[data-mood="break"] .pip-bulb { animation: pip-soft 3s ease-in-out infinite; }
+/* End of day: a little wave. */
+.pip .pip-wave { animation: pip-wave 2.4s ease-in-out 3; }
+/* Celebration: two hops and confetti. */
+.pip[data-mood="celebrate"] .pip-bob { animation: pip-hop .9s cubic-bezier(.3, 0, .3, 1) 3; }
+.pip[data-mood="celebrate"] .pip-shadow { animation: pip-hop-shadow .9s cubic-bezier(.3, 0, .3, 1) 3; }
+.pip[data-mood="celebrate"] .pip-bulb { animation: pip-beat .5s ease-in-out 6; }
+.pip .pip-confetti rect { opacity: 0; animation: pip-pop 1.6s ease-out 2 both; }
+.pip .pip-confetti rect:nth-child(2) { animation-delay: 60ms; }
+.pip .pip-confetti rect:nth-child(3) { animation-delay: 120ms; }
+.pip .pip-confetti rect:nth-child(4) { animation-delay: 180ms; }
+.pip .pip-confetti rect:nth-child(5) { animation-delay: 240ms; }
+.pip .pip-confetti rect:nth-child(6) { animation-delay: 300ms; }
+.pip .pip-confetti rect:nth-child(7) { animation-delay: 360ms; }
+.pip .pip-confetti rect:nth-child(8) { animation-delay: 420ms; }
+.pip[data-mood="celebrate"] .pip-stars { animation: pip-twinkle 1.2s ease-in-out infinite; }
+/* Night: no float, slow breathing, drifting z's, dim light. */
+.pip[data-mood="sleepy"] .pip-bob { animation: pip-breathe 4.6s ease-in-out infinite; }
+.pip[data-mood="sleepy"] .pip-shadow { animation: none; }
+.pip[data-mood="sleepy"] .pip-zzz path { animation: pip-z 3.6s ease-out infinite; }
+.pip .pip-late { animation-delay: .9s !important; }
+.pip .pip-later { animation-delay: 1.8s !important; }
+
+@keyframes pip-float { 0%, 100% { transform: translateY(0); } 50% { transform: translateY(-3px); } }
+@keyframes pip-shadow { 0%, 100% { transform: scaleX(1); opacity: 1; } 50% { transform: scaleX(.88); opacity: .75; } }
+@keyframes pip-blink { 0%, 92%, 100% { transform: scaleY(1); } 95% { transform: scaleY(.1); } }
+@keyframes pip-beat { 0%, 40%, 100% { transform: scale(1); } 10% { transform: scale(1.3); } 25% { transform: scale(1.18); } }
+@keyframes pip-ring { 0% { transform: scale(1); opacity: .55; } 70%, 100% { transform: scale(2.6); opacity: 0; } }
+@keyframes pip-stretch { 0%, 100% { transform: scale(1, 1); } 30% { transform: scale(.97, 1.04) translateY(-2px); } 45% { transform: scale(1.02, .98); } }
+@keyframes pip-arms-up { 0%, 100% { transform: translateY(0); } 30% { transform: translateY(-9px); } }
+@keyframes pip-dawn { 0%, 100% { opacity: .55; } 30% { opacity: 1; } }
+@keyframes pip-soft { 0%, 100% { opacity: .7; } 50% { opacity: 1; } }
+@keyframes pip-steam { 0% { opacity: 0; transform: translateY(3px); } 35% { opacity: .85; } 100% { opacity: 0; transform: translateY(-7px); } }
+@keyframes pip-wave { 0%, 60%, 100% { transform: rotate(0); } 15%, 45% { transform: rotate(-38deg); } 30% { transform: rotate(-16deg); } }
+@keyframes pip-hop { 0%, 100% { transform: translateY(0) scale(1, 1); } 15% { transform: translateY(0) scale(1.05, .94); } 45% { transform: translateY(-12px) scale(.97, 1.04); } 75% { transform: translateY(0) scale(1.04, .96); } }
+@keyframes pip-hop-shadow { 0%, 100% { transform: scaleX(1); } 45% { transform: scaleX(.7); opacity: .6; } }
+@keyframes pip-pop { 0% { opacity: 0; transform: translateY(6px) scale(.4) rotate(0); } 30% { opacity: 1; } 100% { opacity: 0; transform: translateY(-8px) scale(1) rotate(160deg); } }
+@keyframes pip-twinkle { 0%, 100% { transform: scale(1) rotate(0); } 50% { transform: scale(1.12) rotate(8deg); } }
+@keyframes pip-breathe { 0%, 100% { transform: scale(1); } 50% { transform: scale(1.025, 1.035); } }
+@keyframes pip-z { 0% { opacity: 0; transform: translate(0, 4px) scale(.7); } 30% { opacity: .9; } 100% { opacity: 0; transform: translate(6px, -8px) scale(1.1); } }
+
+/* Still poses: the person asked for less motion, or the surface is a screenshot. */
+.pip.pip-still *, .pip.pip-still { animation: none !important; }
+.pip.pip-still .pip-steam { opacity: .7; }
+.pip.pip-still .pip-zzz path { opacity: .8; }
+.pip.pip-still .pip-confetti rect { opacity: 1; }
+@media (prefers-reduced-motion: reduce) {
+  .pip *, .pip { animation: none !important; }
+  .pip .pip-steam { opacity: .7; }
+  .pip .pip-zzz path { opacity: .8; }
+  .pip .pip-confetti rect { opacity: 1; }
+}

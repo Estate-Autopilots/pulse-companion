@@ -1,0 +1,14 @@
+node_modules/
+**/target/
+**/dist/
+apps/mobile/android/
+apps/mobile/ios/
+.expo/
+*.zip
+*.apk
+*.ipa
+.env*
+*.p12
+*.p8
+*.jks
+*.keystore

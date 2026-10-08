@@ -1,0 +1,260 @@
+name: Pulse Companion builds
+# Internal test builds of the Pulse apps on GitHub's runners (the VPS stays cool): Windows MSI/EXE and macOS DMG
+# (Tauri), Android APK (Expo, ephemeral test signing), the Chrome extension ZIP, plus screenshots of each app running
+# on a real runner/emulator. Unsigned for Windows/macOS until the owner provides certificates.
+on:
+  push:
+    branches: [main]
+    paths: ['apps/desktop/**', 'apps/mobile/**', 'apps/chrome-extension/**', 'packages/companion/**', 'packages/design-system/**', 'pnpm-lock.yaml', '.github/workflows/companion-builds.yml']
+  workflow_dispatch:
+permissions:
+  contents: read
+concurrency:
+  group: companion-${{ github.ref }}
+  cancel-in-progress: false
+jobs:
+  desktop:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - { os: windows-latest, platform: windows, bundles: 'nsis,msi', target: '' }
+          - { os: macos-latest, platform: macos, bundles: dmg, target: universal-apple-darwin }
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 75
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v7
+        with: { node-version-file: .nvmrc }
+      - uses: dtolnay/rust-toolchain@stable
+      # rust-toolchain.toml pins the toolchain; the universal Mac build needs both Apple targets on that toolchain.
+      - if: matrix.platform == 'macos'
+        run: rustup target add aarch64-apple-darwin x86_64-apple-darwin
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: |
+            apps/desktop/core
+            apps/desktop/src-tauri
+      - run: corepack enable && pnpm install --frozen-lockfile
+      - run: node --test --test-concurrency=2 packages/companion/test/*.test.js
+      - run: pnpm --dir apps/desktop run build && pnpm --dir apps/desktop test
+      - run: cargo test -j2 --manifest-path apps/desktop/core/Cargo.toml
+      - name: Build installers
+        shell: bash
+        env: { CARGO_BUILD_JOBS: 2 }
+        run: pnpm --dir apps/desktop exec tauri build --bundles '${{ matrix.bundles }}' ${{ matrix.target && format('--target {0}', matrix.target) || '' }}
+      - name: Screenshot the panel on the runner (Windows)
+        if: matrix.platform == 'windows'
+        continue-on-error: true
+        shell: pwsh
+        run: |
+          New-Item -ItemType Directory -Force screens | Out-Null
+          $app = Start-Process -FilePath apps/desktop/src-tauri/target/release/pulse-desktop.exe -ArgumentList '--pinned' -PassThru
+          Start-Sleep -Seconds 15
+          Get-Process pulse-desktop -ErrorAction SilentlyContinue | Format-Table Id, MainWindowTitle, Responding
+          if ($app.HasExited) { throw "Pulse exited with code $($app.ExitCode)" }
+          Add-Type -AssemblyName System.Windows.Forms,System.Drawing
+          $b = [System.Windows.Forms.Screen]::PrimaryScreen.Bounds
+          $bmp = New-Object System.Drawing.Bitmap $b.Width, $b.Height
+          $g = [System.Drawing.Graphics]::FromImage($bmp); $g.CopyFromScreen($b.Location, [System.Drawing.Point]::Empty, $b.Size)
+          $bmp.Save("screens/windows-desktop.png", [System.Drawing.Imaging.ImageFormat]::Png)
+          Stop-Process -Id $app.Id -Force
+      - name: Screenshot the panel on the runner (macOS)
+        if: matrix.platform == 'macos'
+        continue-on-error: true
+        run: |
+          mkdir -p screens
+          dmg=$(find apps/desktop/src-tauri/target -path '*bundle/dmg/*.dmg' -print -quit)
+          test -n "$dmg"
+          mkdir -p "$RUNNER_TEMP/pulse-mount"
+          hdiutil attach "$dmg" -readonly -nobrowse -mountpoint "$RUNNER_TEMP/pulse-mount"
+          app=$(find "$RUNNER_TEMP/pulse-mount" -maxdepth 2 -name '*.app' -print -quit)
+          test -n "$app"
+          "$app/Contents/MacOS/pulse-desktop" --pinned > screens/macos-app.log 2>&1 &
+          app_pid=$!
+          sleep 15
+          kill -0 "$app_pid"
+          screencapture -x screens/macos-desktop.png
+          kill "$app_pid"
+          hdiutil detach "$RUNNER_TEMP/pulse-mount"
+      - uses: actions/upload-artifact@v7
+        with:
+          name: companion-desktop-${{ matrix.platform }}-${{ github.sha }}
+          path: |
+            apps/desktop/src-tauri/target/**/release/bundle/nsis/*.exe
+            apps/desktop/src-tauri/target/**/release/bundle/msi/*.msi
+            apps/desktop/src-tauri/target/**/release/bundle/dmg/*.dmg
+          if-no-files-found: error
+          retention-days: 30
+      - uses: actions/upload-artifact@v7
+        if: always()
+        with:
+          name: companion-screens-${{ matrix.platform }}-${{ github.sha }}
+          path: screens/
+          if-no-files-found: ignore
+          retention-days: 30
+
+  android:
+    runs-on: ubuntu-latest
+    timeout-minutes: 75
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v7
+        with: { node-version-file: .nvmrc }
+      - uses: actions/setup-java@v5
+        with: { distribution: temurin, java-version: '17' }
+      - uses: android-actions/setup-android@v3
+        with: { packages: platform-tools }
+      - run: corepack enable && pnpm install --frozen-lockfile
+      - run: pnpm --filter @pulse/mobile typecheck && pnpm --filter @pulse/mobile test
+      - run: pnpm --filter @pulse/mobile exec expo prebuild --platform android --no-install --clean
+      - name: Build installable APK with bundled JavaScript
+        working-directory: apps/mobile/android
+        run: ./gradlew assembleRelease --no-daemon --max-workers=2 -Dorg.gradle.parallel=false -PreactNativeArchitectures=arm64-v8a,x86_64
+      - uses: actions/upload-artifact@v7
+        with:
+          name: companion-android-${{ github.sha }}
+          path: apps/mobile/android/app/build/outputs/apk/release/*.apk
+          if-no-files-found: error
+          retention-days: 30
+
+  android-screens:
+    needs: android
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    continue-on-error: true
+    steps:
+      - uses: actions/download-artifact@v7
+        with: { name: 'companion-android-${{ github.sha }}', path: apk }
+      - name: Enable KVM
+        run: |
+          echo 'KERNEL=="kvm", GROUP="kvm", MODE="0666", OPTIONS+="static_node=kvm"' | sudo tee /etc/udev/rules.d/99-kvm4all.rules
+          sudo udevadm control --reload-rules && sudo udevadm trigger --name-match=kvm
+      - uses: reactivecircus/android-emulator-runner@v2
+        with:
+          api-level: 34
+          arch: x86_64
+          target: google_apis
+          disable-animations: false
+          script: |
+            mkdir -p screens
+            adb install -r apk/*.apk
+            adb shell pm grant com.pulse.work.mobile android.permission.POST_NOTIFICATIONS || true
+            adb shell am start -W -n com.pulse.work.mobile/.MainActivity; sleep 12; adb exec-out screencap -p > screens/android-start.png
+            for s in out in break done; do adb shell am start -W -a android.intent.action.VIEW -d "pulse://demo?state=$s" com.pulse.work.mobile; sleep 6; adb exec-out screencap -p > screens/android-$s.png; done
+            adb shell cmd uimode night yes; adb shell am start -W -a android.intent.action.VIEW -d "pulse://demo?state=in" com.pulse.work.mobile; sleep 6; adb exec-out screencap -p > screens/android-in-dark.png
+      - uses: actions/upload-artifact@v7
+        with:
+          name: companion-screens-android-${{ github.sha }}
+          path: screens/
+          retention-days: 30
+
+  ios-simulator:
+    # Proves the iPhone app compiles and shows its screens without Apple signing (Simulator build only).
+    runs-on: macos-latest
+    timeout-minutes: 75
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v7
+        with: { node-version-file: .nvmrc }
+      - name: Boot an iPhone while the app builds
+        run: |
+          udid=$(xcrun simctl list devices available -j | python3 -c "import sys,json; d=json.load(sys.stdin)['devices']; print(next(x['udid'] for k,v in d.items() if 'iOS' in k for x in v if x['name'].startswith('iPhone')))")
+          echo "IPHONE_UDID=$udid" >> "$GITHUB_ENV"
+          xcrun simctl boot "$udid"
+      - run: corepack enable && pnpm install --frozen-lockfile
+      - run: pnpm --filter @pulse/mobile exec expo prebuild --platform ios --clean
+      - name: Build the app scheme (not the first CocoaPods library scheme)
+        run: |
+          workspace=$(find apps/mobile/ios -maxdepth 1 -name '*.xcworkspace' -print -quit)
+          test -n "$workspace"
+          scheme=$(basename "$workspace" .xcworkspace)
+          xcodebuild -jobs 2 -workspace "$workspace" -scheme "$scheme" -configuration Release -sdk iphonesimulator -destination 'generic/platform=iOS Simulator' -derivedDataPath "$RUNNER_TEMP/pulse-ios" CODE_SIGNING_ALLOWED=NO -quiet
+          app=$(find "$RUNNER_TEMP/pulse-ios/Build/Products" -maxdepth 2 -name '*.app' -print -quit)
+          test -n "$app" && test -f "$app/Info.plist"
+          /usr/libexec/PlistBuddy -c 'Print CFBundleIdentifier' "$app/Info.plist" | grep -qx com.pulse.work.mobile
+          # The Simulator needs a local ad-hoc signature for Keychain APIs; no Apple account is used.
+          cat > "$RUNNER_TEMP/pulse-simulator.entitlements" <<'PLIST'
+          <?xml version="1.0" encoding="UTF-8"?>
+          <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+          <plist version="1.0"><dict><key>application-identifier</key><string>com.pulse.work.mobile</string><key>keychain-access-groups</key><array><string>com.pulse.work.mobile</string></array><key>get-task-allow</key><true/></dict></plist>
+          PLIST
+          codesign --force --sign - --entitlements "$RUNNER_TEMP/pulse-simulator.entitlements" "$app"
+          echo "IPHONE_APP=$app" >> "$GITHUB_ENV"
+          ditto -c -k --keepParent "$app" "$RUNNER_TEMP/pulse-ios-simulator.zip"
+      - uses: actions/upload-artifact@v7
+        with:
+          name: companion-ios-simulator-${{ github.sha }}
+          path: ${{ runner.temp }}/pulse-ios-simulator.zip
+          if-no-files-found: error
+      - name: Install the app and capture the four attendance states
+        run: |
+          mkdir -p screens
+          swiftc apps/mobile/scripts/ios-screen-check.swift -o "$RUNNER_TEMP/ios-screen-check"
+          open -a Simulator --args -CurrentDeviceUDID "$IPHONE_UDID"
+          xcrun simctl bootstatus "$IPHONE_UDID" -b
+          xcrun simctl install "$IPHONE_UDID" "$IPHONE_APP"
+          xcrun simctl launch "$IPHONE_UDID" com.pulse.work.mobile
+          sleep 15
+          xcrun simctl io "$IPHONE_UDID" screenshot screens/ios-start.png
+          "$RUNNER_TEMP/ios-screen-check" screens/ios-start.png "Sign in"
+          for s in out in break done; do
+            xcrun simctl openurl "$IPHONE_UDID" "pulse://demo?state=$s"
+            sleep 3
+            osascript -e 'tell application "Simulator" to activate' -e 'tell application "System Events" to key code 36'
+            sleep 6
+            xcrun simctl io "$IPHONE_UDID" screenshot "screens/ios-$s.png"
+            case "$s" in out) expected='Not checked in';; in) expected='Take a break';; break) expected='On a break';; done) expected='Done for today';; esac
+            "$RUNNER_TEMP/ios-screen-check" "screens/ios-$s.png" "$expected"
+          done
+          xcrun simctl ui "$IPHONE_UDID" appearance dark
+          xcrun simctl openurl "$IPHONE_UDID" 'pulse://demo?state=in'
+          sleep 3
+          osascript -e 'tell application "Simulator" to activate' -e 'tell application "System Events" to key code 36'
+          sleep 6
+          xcrun simctl io "$IPHONE_UDID" screenshot screens/ios-in-dark.png
+          "$RUNNER_TEMP/ios-screen-check" screens/ios-in-dark.png "Take a break"
+      - uses: actions/upload-artifact@v7
+        if: always()
+        with:
+          name: companion-screens-ios-${{ github.sha }}
+          path: screens/
+          if-no-files-found: error
+
+  ios-device:
+    runs-on: macos-latest
+    timeout-minutes: 75
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v7
+        with: { node-version-file: .nvmrc }
+      - run: corepack enable && pnpm install --frozen-lockfile
+      - run: pnpm --filter @pulse/mobile exec expo prebuild --platform ios --clean
+      - name: Unsigned iPhone device build
+        run: |
+          workspace=$(find apps/mobile/ios -maxdepth 1 -name '*.xcworkspace' -print -quit)
+          scheme=$(basename "$workspace" .xcworkspace)
+          xcodebuild -jobs 2 -workspace "$workspace" -scheme "$scheme" -configuration Release -sdk iphoneos -destination 'generic/platform=iOS' -derivedDataPath "$RUNNER_TEMP/pulse-device" CODE_SIGNING_ALLOWED=NO -quiet
+          app=$(find "$RUNNER_TEMP/pulse-device/Build/Products/Release-iphoneos" -maxdepth 1 -name '*.app' -print -quit)
+          test -n "$app"
+          ditto -c -k --keepParent "$app" "$RUNNER_TEMP/pulse-ios-device-unsigned.zip"
+      - uses: actions/upload-artifact@v7
+        with:
+          name: companion-ios-device-${{ github.sha }}
+          path: ${{ runner.temp }}/pulse-ios-device-unsigned.zip
+          if-no-files-found: error
+
+  chrome:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v7
+        with: { node-version-file: .nvmrc }
+      - run: node apps/chrome-extension/scripts/sync-shared.mjs --check && node --test --test-concurrency=2 apps/chrome-extension/test/*.test.js
+      - run: node apps/chrome-extension/scripts/package.mjs pulse-chrome.zip
+      - uses: actions/upload-artifact@v7
+        with:
+          name: companion-chrome-${{ github.sha }}
+          path: pulse-chrome.zip
+          if-no-files-found: error
+          retention-days: 30

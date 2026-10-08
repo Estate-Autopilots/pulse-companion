@@ -1,0 +1,107 @@
+{
+  "expo": {
+    "name": "Pulse",
+    "slug": "pulse-native",
+    "version": "0.3.0",
+    "scheme": "pulse",
+    "orientation": "portrait",
+    "userInterfaceStyle": "automatic",
+    "icon": "./assets/icon.png",
+    "ios": {
+      "bundleIdentifier": "com.pulse.work.mobile",
+      "buildNumber": "3",
+      "supportsTablet": true,
+      "entitlements": {
+        "com.apple.developer.networking.wifi-info": true
+      },
+      "infoPlist": {
+        "NSLocationWhenInUseUsageDescription": "Pulse uses location permission for office Wi-Fi suggestions and arrival reminders. Location is read for region events or a shoot you confirm; Pulse keeps no location history.",
+        "NSLocationAlwaysAndWhenInUseUsageDescription": "With \u201cAlways\u201d, your iPhone tells Pulse when you arrive at or leave an office or confirmed shoot site, so it can suggest checking in or out. Pulse never keeps a location history."
+      }
+    },
+    "android": {
+      "package": "com.pulse.work.mobile",
+      "versionCode": 3,
+      "adaptiveIcon": {
+        "foregroundImage": "./assets/adaptive-icon.png",
+        "backgroundColor": "#ECE8FF"
+      },
+      "permissions": [
+        "POST_NOTIFICATIONS",
+        "ACCESS_COARSE_LOCATION",
+        "ACCESS_FINE_LOCATION",
+        "ACCESS_BACKGROUND_LOCATION",
+        "ACCESS_WIFI_STATE",
+        "ACCESS_NETWORK_STATE",
+        "VIBRATE"
+      ]
+    },
+    "plugins": [
+      "expo-secure-store",
+      [
+        "expo-sqlite",
+        {
+          "useSQLCipher": true
+        }
+      ],
+      [
+        "expo-location",
+        {
+          "locationWhenInUsePermission": "Pulse uses location permission for office Wi-Fi suggestions and arrival reminders. Location is read for region events or a shoot you confirm; Pulse keeps no location history.",
+          "locationAlwaysAndWhenInUsePermission": "With \u201cAllow all the time\u201d, your phone tells Pulse when you arrive at or leave an office or confirmed shoot site, so it can suggest checking in or out. Pulse never keeps a location history.",
+          "isAndroidBackgroundLocationEnabled": true,
+          "isAndroidForegroundServiceEnabled": false
+        }
+      ],
+      [
+        "expo-notifications",
+        {
+          "color": "#5B45D6"
+        }
+      ],
+      [
+        "react-native-android-widget",
+        {
+          "widgets": [
+            {
+              "name": "PulseToday",
+              "label": "Pulse",
+              "description": "Check in, take a break and check out in one tap",
+              "minWidth": "250dp",
+              "minHeight": "110dp",
+              "targetCellWidth": 4,
+              "targetCellHeight": 2,
+              "resizeMode": "horizontal|vertical",
+              "previewImage": "./assets/widget-preview.png",
+              "updatePeriodMillis": 1800000
+            }
+          ]
+        }
+      ],
+      [
+        "expo-widgets",
+        {
+          "groupIdentifier": "group.com.pulse.work.mobile",
+          "enablePushNotifications": false,
+          "widgets": [
+            {
+              "name": "PulseTodayIOS",
+              "displayName": "Pulse Today",
+              "description": "Your working day and one-tap attendance",
+              "ios": {
+                "supportedFamilies": [
+                  "systemSmall",
+                  "systemMedium"
+                ]
+              }
+            }
+          ]
+        }
+      ],
+      "./plugins/with-pip-widget.cjs"
+    ],
+    "extra": {
+      "apiUrl": "https://pulse.estateautopilots.com/api/native/v0"
+    }
+  }
+}

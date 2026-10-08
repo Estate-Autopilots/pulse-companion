@@ -1,0 +1,10 @@
+import { registerRootComponent } from 'expo';
+import { registerWidgetTaskHandler } from 'react-native-android-widget';
+import './src/background';
+import { widgetTaskHandler } from './src/widget';
+import App from './App';
+import notifee from '@notifee/react-native';
+import {handleRibbonEvent} from './src/native-surfaces';
+notifee.onBackgroundEvent(handleRibbonEvent);
+registerRootComponent(App);
+registerWidgetTaskHandler(widgetTaskHandler);
