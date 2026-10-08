@@ -34,7 +34,7 @@ export function checkBase(base) {
  * tokens: { accessToken, refreshToken, deviceId, person? }
  * credentials: 'include' lets the Chrome extension pass the browser's Access cookie along; native apps omit it.
  */
-export function createClient({ base = DEFAULT_BASE, fetchImpl = globalThis.fetch, store, client = 'companion/0.2.0', credentials = 'omit', timeoutMs = 20000 }) {
+export function createClient({ base = DEFAULT_BASE, fetchImpl = globalThis.fetch, store, client = 'companion/0.3.0', credentials = 'omit', timeoutMs = 20000 }) {
   base = checkBase(base);
   let refreshing = null;
 

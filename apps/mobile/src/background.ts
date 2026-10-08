@@ -3,7 +3,10 @@
 import * as Location from 'expo-location';
 import * as TaskManager from 'expo-task-manager';
 import { init, signedIn } from './client';
-import { GEOFENCE_TASK, onRegion } from './companion';
+import { GEOFENCE_TASK, onRegion, loadDay } from './companion';
+
+import {refreshNativeSurfaces} from './native-surfaces';
+import {refreshWidget} from './widget';
 
 type RegionEvent = { eventType: Location.GeofencingEventType; region: Location.LocationRegion };
 
@@ -12,5 +15,8 @@ TaskManager.defineTask<RegionEvent>(GEOFENCE_TASK, async ({ data, error }) => {
   try {
     if (!signedIn() && !(await init())) return;
     await onRegion(data.eventType === Location.GeofencingEventType.Enter ? 'enter' : 'exit', data.region.identifier);
+    const day=await loadDay();
+    await refreshWidget(day?.payload??null);
+    await refreshNativeSurfaces(day?.payload??null);
   } catch { /* the next region event or app open tries again */ }
 });

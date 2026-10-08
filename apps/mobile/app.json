@@ -37,6 +37,7 @@
       ]
     },
     "plugins": [
+      "./plugins/with-work-manager.cjs",
       "expo-secure-store",
       [
         "expo-sqlite",
