@@ -126,7 +126,9 @@ jobs:
           emulator-build: 14788078
           profile: pixel_7
           arch: x86_64
-          target: google_apis
+          # No Google services are needed by this shell. The Google image's Pixel Launcher ANR covered Pulse
+          # under Mesa; use the AOSP launcher, with the same API, signed APK and acceptance assertions.
+          target: default
           cores: 2
           ram-size: 2048M
           heap-size: 512M

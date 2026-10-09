@@ -3,11 +3,12 @@
 set -euo pipefail
 : "${ANDROID_HOME:?Android SDK required}" "${GITHUB_WORKSPACE:?Runner workspace required}"
 mkdir -p "$GITHUB_WORKSPACE/screens"
+: > "$GITHUB_WORKSPACE/screens/emulator-host.log"
 test ! -e "$ANDROID_HOME/emulator/emulator.bin"
 cp "$ANDROID_HOME/emulator/emulator" "$ANDROID_HOME/emulator/emulator.bin"
 cat > "$ANDROID_HOME/emulator/emulator" <<'SH'
 #!/bin/sh
-exec > "$GITHUB_WORKSPACE/screens/emulator-host.log" 2>&1
+exec >> "$GITHUB_WORKSPACE/screens/emulator-host.log" 2>&1
 "$ANDROID_HOME/emulator/emulator.bin" "$@" < /dev/null &
 emulator_pid=$!
 stop() { printf 'Pulse emulator wrapper received signal: %s\n' "$1"; kill "$emulator_pid" 2>/dev/null || true; wait "$emulator_pid"; exit "$2"; }
