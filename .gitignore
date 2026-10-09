@@ -1,9 +1,10 @@
 node_modules/
 **/target/
 **/dist/
-apps/mobile/android/
-apps/mobile/ios/
-.expo/
+apps/mobile/android/.gradle/
+apps/mobile/android/build/
+apps/mobile/android/app/build/
+apps/mobile/ios/App/build/
 *.zip
 *.apk
 *.ipa

@@ -1,0 +1,8 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <color name="pulse_canvas">#121219</color>
+    <color name="pulse_action">#A99CFF</color>
+    <color name="colorPrimary">#A99CFF</color>
+    <color name="colorPrimaryDark">#121219</color>
+    <color name="colorAccent">#A99CFF</color>
+</resources>

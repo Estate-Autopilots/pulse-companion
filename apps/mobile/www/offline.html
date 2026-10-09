@@ -1,0 +1,59 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover,user-scalable=no">
+<meta name="color-scheme" content="light dark">
+<title>Pulse</title>
+<style>
+  /* The shell's own offline screen: shown instead of any browser error when Pulse cannot be reached. */
+  :root { --canvas:#f6f6fa; --surface:#fff; --text:#191a2e; --muted:#66687e; --action:#5b45d6; --action-text:#fff; --border:#dbdce8; }
+  @media (prefers-color-scheme: dark) { :root { --canvas:#121219; --surface:#1a1a24; --text:#eeeef6; --muted:#a7a8bb; --action:#a99cff; --action-text:#17123a; --border:#31313f; } .light { display:none } }
+  @media (prefers-color-scheme: light) { .dark { display:none } }
+  html, body { margin:0; height:100%; background:var(--canvas); color:var(--text); font:16px/1.45 system-ui,-apple-system,"Segoe UI",Roboto,sans-serif;
+    -webkit-user-select:none; user-select:none; -webkit-tap-highlight-color:transparent; }
+  main { box-sizing:border-box; min-height:100%; display:grid; place-items:center; text-align:center;
+    padding:max(24px,env(safe-area-inset-top)) 24px max(24px,env(safe-area-inset-bottom)); }
+  .card { max-width:340px; display:grid; justify-items:center; gap:12px; }
+  h1 { font-size:22px; line-height:1.25; margin:8px 0 0; font-weight:650; }
+  p { margin:0; color:var(--muted); }
+  button { margin-top:12px; min-height:48px; min-width:180px; border:0; border-radius:14px; padding:0 22px; font:inherit; font-weight:600;
+    background:var(--action); color:var(--action-text); }
+  button:active { transform:scale(.98); }
+  button[disabled] { opacity:.6; }
+  small { color:var(--muted); font-size:13px; min-height:18px; }
+</style>
+</head>
+<body>
+<main>
+  <section class="card" aria-live="polite">
+    <span class="light" aria-hidden="true"><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 120 120" width="96" height="96"><defs><linearGradient id="pb" x1="0" y1="0" x2="1" y2="1"><stop offset="0" stop-color="#8a76f5"/><stop offset="1" stop-color="#5b45d6"/></linearGradient></defs><ellipse cx="60" cy="111" rx="24" ry="4.5" fill="rgba(24,20,60,.16)"/><path d="M60 26V14" stroke="#4a35c0" stroke-width="3.5" stroke-linecap="round"/><circle cx="60" cy="10" r="5" fill="#ffd38a"/><ellipse cx="20" cy="68" rx="6" ry="9" fill="#4a35c0"/><ellipse cx="100" cy="68" rx="6" ry="9" fill="#4a35c0"/><rect x="22" y="25" width="76" height="66" rx="28" fill="url(#pb)"/><rect x="31" y="36" width="58" height="42" rx="18" fill="#1d1842"/><rect x="43" y="47" width="9" height="13" rx="4.5" fill="#8ff0d2"/><rect x="68" y="47" width="9" height="13" rx="4.5" fill="#8ff0d2"/><ellipse cx="60" cy="67.5" rx="3.2" ry="3.6" fill="#8ff0d2"/><circle cx="37.5" cy="64" r="3.6" fill="#ff8fb1" fill-opacity=".55"/><circle cx="82.5" cy="64" r="3.6" fill="#ff8fb1" fill-opacity=".55"/></svg></span>
+    <span class="dark" aria-hidden="true"><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 120 120" width="96" height="96"><defs><linearGradient id="pbd" x1="0" y1="0" x2="1" y2="1"><stop offset="0" stop-color="#9d8cff"/><stop offset="1" stop-color="#6a55e6"/></linearGradient></defs><ellipse cx="60" cy="111" rx="24" ry="4.5" fill="rgba(0,0,0,.45)"/><path d="M60 26V14" stroke="#5a46d4" stroke-width="3.5" stroke-linecap="round"/><circle cx="60" cy="10" r="5" fill="#ffd38a"/><ellipse cx="20" cy="68" rx="6" ry="9" fill="#5a46d4"/><ellipse cx="100" cy="68" rx="6" ry="9" fill="#5a46d4"/><rect x="22" y="25" width="76" height="66" rx="28" fill="url(#pbd)"/><rect x="31" y="36" width="58" height="42" rx="18" fill="#100d26"/><rect x="43" y="47" width="9" height="13" rx="4.5" fill="#8ff0d2"/><rect x="68" y="47" width="9" height="13" rx="4.5" fill="#8ff0d2"/><ellipse cx="60" cy="67.5" rx="3.2" ry="3.6" fill="#8ff0d2"/><circle cx="37.5" cy="64" r="3.6" fill="#ff8fb1" fill-opacity=".55"/><circle cx="82.5" cy="64" r="3.6" fill="#ff8fb1" fill-opacity=".55"/></svg></span>
+    <h1 id="title">You’re offline</h1>
+    <p id="text">Pulse needs the internet. Your work is safe; Pulse opens again as soon as you’re connected.</p>
+    <button id="retry" type="button">Retry</button>
+    <small id="note"></small>
+  </section>
+</main>
+<script>
+  // Only Pulse itself may be reopened from here.
+  var ORIGIN = 'https://pulse.estateautopilots.com';
+  var query = new URLSearchParams(location.search);
+  var from = query.get('from') || '';
+  var target = from.indexOf(ORIGIN + '/') === 0 ? from : ORIGIN + '/';
+  if (query.get('why') === 'server') {
+    document.getElementById('title').textContent = 'Pulse can’t be reached right now';
+    document.getElementById('text').textContent = 'Your connection works, but Pulse did not answer. It usually comes back within a minute.';
+  }
+  var retry = document.getElementById('retry'), note = document.getElementById('note'), busy = false;
+  function attempt(manual) {
+    if (busy) return; busy = true; retry.disabled = true; note.textContent = manual ? 'Trying again…' : '';
+    fetch(ORIGIN + '/healthz', { cache: 'no-store', mode: 'no-cors' }).then(function () { location.replace(target); })
+      .catch(function () { busy = false; retry.disabled = false; note.textContent = manual ? 'Still offline. Pulse keeps trying by itself.' : ''; });
+  }
+  retry.addEventListener('click', function () { attempt(true); });
+  window.addEventListener('online', function () { attempt(false); });
+  setInterval(function () { if (navigator.onLine) attempt(false); }, 8000);
+</script>
+</body>
+</html>

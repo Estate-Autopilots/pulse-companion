@@ -1,7 +1,9 @@
 name: Pulse Companion builds
 # Internal test builds of the Pulse apps on GitHub's runners (the VPS stays cool): Windows MSI/EXE and macOS DMG
-# (Tauri), Android APK (Expo, durable Pulse test signing), the Chrome extension ZIP, plus screenshots of each app running
-# on a real runner/emulator. Unsigned for Windows/macOS until the owner provides certificates.
+# (Tauri) and the Chrome extension ZIP, plus screenshots of each app running on a real runner. Unsigned for
+# Windows/macOS until the owner provides certificates. Nothing is published from here: desktop releases go through
+# desktop-release.yml, the phone app (Capacitor shell) through mobile.yml, whose promote step alone moves the
+# phone's update channel. Pushes run this build only when asked (workflow_dispatch).
 on:
   push:
     branches: [main]
@@ -34,7 +36,7 @@ concurrency:
   cancel-in-progress: false
 jobs:
   prepare:
-    if: ${{ !inputs.macos_ping_build && !contains(github.event.head_commit.message, '[desktop-only]') }}
+    if: ${{ github.event_name == 'workflow_dispatch' && !inputs.macos_ping_build }}
     runs-on: ubuntu-latest
     outputs:
       version: ${{ steps.version.outputs.version }}
@@ -54,7 +56,8 @@ jobs:
         run: node apps/desktop/scripts/check-release.mjs
       - id: version
         env: { GH_TOKEN: '${{ github.token }}', REQUESTED_VERSION: '${{ inputs.version }}' }
-        run: echo "version=$(node apps/desktop/scripts/release-version.mjs "$REQUESTED_VERSION")" >> "$GITHUB_OUTPUT"
+        # Build-only: the committed versions are used as they are (desktop-release.yml and mobile.yml publish).
+        run: echo "version=$(node -p "require('./apps/desktop/package.json').version")" >> "$GITHUB_OUTPUT"
       - id: notes
         env: { REQUESTED_NOTES: '${{ inputs.notes }}' }
         run: |
@@ -82,7 +85,6 @@ jobs:
           workspaces: |
             apps/desktop/core
             apps/desktop/src-tauri
-      - run: node apps/desktop/scripts/release-version.mjs "${{ needs.prepare.outputs.version }}"
       - run: corepack enable && pnpm install --frozen-lockfile
       - run: node --test --test-concurrency=2 packages/companion/test/*.test.js
       - run: pnpm --dir apps/desktop run build && pnpm --dir apps/desktop test
@@ -285,137 +287,6 @@ jobs:
           if-no-files-found: ignore
           retention-days: 30
 
-  android:
-    needs: prepare
-    runs-on: ubuntu-latest
-    timeout-minutes: 75
-    steps:
-      - uses: actions/checkout@v7
-      - uses: actions/setup-node@v7
-        with: { node-version-file: .nvmrc }
-      - uses: actions/setup-java@v5
-        with: { distribution: temurin, java-version: '17' }
-      - uses: android-actions/setup-android@v3
-        with: { packages: platform-tools }
-      - run: node apps/desktop/scripts/release-version.mjs "${{ needs.prepare.outputs.version }}"
-      - run: corepack enable && pnpm install --frozen-lockfile
-      - run: pnpm --filter @pulse/mobile typecheck && pnpm --filter @pulse/mobile test
-      - run: pnpm --filter @pulse/mobile exec expo prebuild --platform android --no-install --clean
-      - name: Load durable APK signing identity
-        if: ${{ !inputs.validation_only }}
-        env: { STORE_BASE64: '${{ secrets.ANDROID_SIGNING_STORE_BASE64 }}' }
-        run: |
-          node -e 'require("fs").writeFileSync(process.env.RUNNER_TEMP+"/pulse-signing.p12",Buffer.from(process.env.STORE_BASE64,"base64"),{mode:0o600})'
-      - name: Build installable APK with bundled JavaScript
-        working-directory: apps/mobile/android
-        env:
-          PULSE_ANDROID_KEYSTORE: ${{ !inputs.validation_only && format('{0}/pulse-signing.p12', runner.temp) || '' }}
-          PULSE_ANDROID_KEY_PASSWORD: ${{ secrets.ANDROID_SIGNING_PASSWORD }}
-        run: ./gradlew assembleRelease --no-daemon --max-workers=2 -Dorg.gradle.parallel=false -PreactNativeArchitectures=arm64-v8a,x86_64
-      - uses: actions/upload-artifact@v7
-        with:
-          name: companion-android-${{ github.sha }}
-          path: apps/mobile/android/app/build/outputs/apk/release/*.apk
-          if-no-files-found: error
-          retention-days: 30
-
-  android-screens:
-    needs: android
-    runs-on: ubuntu-latest
-    timeout-minutes: 45
-    steps:
-      - uses: actions/download-artifact@v7
-        with: { name: 'companion-android-${{ github.sha }}', path: apk }
-      - name: Enable KVM
-        run: |
-          echo 'KERNEL=="kvm", GROUP="kvm", MODE="0666", OPTIONS+="static_node=kvm"' | sudo tee /etc/udev/rules.d/99-kvm4all.rules
-          sudo udevadm control --reload-rules && sudo udevadm trigger --name-match=kvm
-      - uses: reactivecircus/android-emulator-runner@v2
-        with:
-          api-level: 34
-          arch: x86_64
-          target: google_apis
-          disable-animations: false
-          script: |
-            mkdir -p screens
-            adb install -r apk/*.apk
-            adb shell pm grant com.pulse.work.mobile android.permission.POST_NOTIFICATIONS || true
-            adb shell am start -W -n com.pulse.work.mobile/.MainActivity; sleep 12; adb exec-out screencap -p > screens/android-start.png
-            adb shell dumpsys appwidget > screens/android-widget-providers.txt
-            for s in out in break done; do adb shell am start -W -a android.intent.action.VIEW -d "pulse://demo?state=$s" com.pulse.work.mobile; sleep 6; adb exec-out screencap -p > "screens/android-$s.png"; if [ "$s" = in ] || [ "$s" = break ]; then adb shell cmd statusbar expand-notifications; sleep 2; adb exec-out screencap -p > "screens/android-ribbon-$s.png"; adb shell cmd statusbar collapse; fi; done
-            adb shell cmd uimode night yes; adb shell am start -W -a android.intent.action.VIEW -d "pulse://demo?state=in" com.pulse.work.mobile; sleep 6; adb exec-out screencap -p > screens/android-in-dark.png
-      - uses: actions/upload-artifact@v7
-        with:
-          name: companion-screens-android-${{ github.sha }}
-          path: screens/
-          retention-days: 30
-
-  ios-simulator:
-    needs: prepare
-    # Builds the Apple Silicon simulator app. The required ios-screens job verifies its UI unchanged.
-    runs-on: macos-latest
-    timeout-minutes: 75
-    steps:
-      - uses: actions/checkout@v7
-      - uses: actions/setup-node@v7
-        with: { node-version-file: .nvmrc }
-      - run: node apps/desktop/scripts/release-version.mjs "${{ needs.prepare.outputs.version }}"
-      - run: corepack enable && pnpm install --frozen-lockfile
-      - run: pnpm --filter @pulse/mobile exec expo prebuild --platform ios --clean
-      - name: Build the app scheme (not the first CocoaPods library scheme)
-        run: |
-          workspace=$(find apps/mobile/ios -maxdepth 1 -name '*.xcworkspace' -print -quit)
-          test -n "$workspace"
-          scheme=$(basename "$workspace" .xcworkspace)
-          xcodebuild -jobs 2 -workspace "$workspace" -scheme "$scheme" -configuration Release -sdk iphonesimulator -destination 'generic/platform=iOS Simulator' -derivedDataPath "$RUNNER_TEMP/pulse-ios" ARCHS=arm64 ONLY_ACTIVE_ARCH=YES CODE_SIGNING_ALLOWED=YES CODE_SIGN_IDENTITY=- CODE_SIGNING_REQUIRED=NO -quiet
-          app=$(find "$RUNNER_TEMP/pulse-ios/Build/Products" -maxdepth 2 -name '*.app' -print -quit)
-          test -n "$app" && test -f "$app/Info.plist"
-          test -s "$app/PlugIns/ExpoWidgetsTarget.appex/Assets.car"
-          /usr/libexec/PlistBuddy -c 'Print CFBundleIdentifier' "$app/Info.plist" | grep -qx com.pulse.work.mobile
-          # Xcode embeds Simulator entitlements in __TEXT and signs locally; iOS restricted
-          # entitlements must not be passed to a manual macOS codesign invocation.
-          codesign --verify --deep --strict "$app"
-          echo "IPHONE_APP=$app" >> "$GITHUB_ENV"
-          ditto -c -k --keepParent "$app" "$RUNNER_TEMP/pulse-ios-simulator.zip"
-      - uses: actions/upload-artifact@v7
-        with:
-          name: companion-ios-simulator-${{ github.sha }}
-          path: ${{ runner.temp }}/pulse-ios-simulator.zip
-          if-no-files-found: error
-  ios-screens:
-    if: ${{ !inputs.validation_only }}
-    needs: ios-simulator
-    uses: ./.github/workflows/ios-simulator-acceptance.yml
-    with:
-      build_run: '${{ github.run_id }}'
-      artifact_name: 'companion-ios-simulator-${{ github.sha }}'
-
-  ios-device:
-    needs: prepare
-    runs-on: macos-latest
-    timeout-minutes: 75
-    steps:
-      - uses: actions/checkout@v7
-      - uses: actions/setup-node@v7
-        with: { node-version-file: .nvmrc }
-      - run: node apps/desktop/scripts/release-version.mjs "${{ needs.prepare.outputs.version }}"
-      - run: corepack enable && pnpm install --frozen-lockfile
-      - run: pnpm --filter @pulse/mobile exec expo prebuild --platform ios --clean
-      - name: Unsigned iPhone device build
-        run: |
-          workspace=$(find apps/mobile/ios -maxdepth 1 -name '*.xcworkspace' -print -quit)
-          scheme=$(basename "$workspace" .xcworkspace)
-          xcodebuild -jobs 2 -workspace "$workspace" -scheme "$scheme" -configuration Release -sdk iphoneos -destination 'generic/platform=iOS' -derivedDataPath "$RUNNER_TEMP/pulse-device" CODE_SIGNING_ALLOWED=NO -quiet
-          app=$(find "$RUNNER_TEMP/pulse-device/Build/Products/Release-iphoneos" -maxdepth 1 -name '*.app' -print -quit)
-          test -n "$app"
-          test -s "$app/PlugIns/ExpoWidgetsTarget.appex/Assets.car"
-          ditto -c -k --keepParent "$app" "$RUNNER_TEMP/pulse-ios-device-unsigned.zip"
-      - uses: actions/upload-artifact@v7
-        with:
-          name: companion-ios-device-${{ github.sha }}
-          path: ${{ runner.temp }}/pulse-ios-device-unsigned.zip
-          if-no-files-found: error
-
   chrome:
     needs: prepare
     runs-on: ubuntu-latest
@@ -423,7 +294,6 @@ jobs:
       - uses: actions/checkout@v7
       - uses: actions/setup-node@v7
         with: { node-version-file: .nvmrc }
-      - run: node apps/desktop/scripts/release-version.mjs "${{ needs.prepare.outputs.version }}"
       - run: node apps/chrome-extension/scripts/sync-shared.mjs --check && node --test --test-concurrency=2 apps/chrome-extension/test/*.test.js
       - run: node apps/chrome-extension/scripts/package.mjs pulse-chrome.zip && node apps/chrome-extension/scripts/package.mjs pulse-chrome-web-store.zip
       - uses: actions/upload-artifact@v7
@@ -434,25 +304,6 @@ jobs:
             pulse-chrome-web-store.zip
           if-no-files-found: error
           retention-days: 30
-
-  publish:
-    needs: [prepare, desktop, windows-tray, android, android-screens, chrome, ios-simulator, ios-device, ios-screens]
-    if: ${{ github.ref == 'refs/heads/main' && !inputs.validation_only }}
-    runs-on: ubuntu-latest
-    permissions: { contents: write, actions: read }
-    steps:
-      - uses: actions/checkout@v7
-      - uses: actions/setup-node@v7
-        with: { node-version-file: .nvmrc }
-      - uses: actions/download-artifact@v7
-        with: { path: artifacts, pattern: 'companion-*-${{ github.sha }}' }
-      - name: Publish signed bundles then advance the channel manifest
-        env:
-          GH_TOKEN: ${{ github.token }}
-          RELEASE_VERSION: ${{ needs.prepare.outputs.version }}
-          RELEASE_NOTES: ${{ needs.prepare.outputs.notes }}
-          RELEASE_CHANNEL: ${{ inputs.channel || 'test' }}
-        run: node apps/desktop/scripts/publish-release.mjs
 
   windows-tray:
     if: ${{ !inputs.validation_only }}
