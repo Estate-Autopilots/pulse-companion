@@ -43,10 +43,15 @@ tell application "System Events"
   if not my pressNamed(UI elements of pulseProcess, "Turn on") then error "Pulse's Turn on button was not accessible"
   repeat 30 times
     delay 1
-    repeat with proc in application processes
-      if name of proc is "NotificationCenter" or name of proc is "UserNotificationCenter" or bundle identifier of proc is "com.pulse.work" then
-        if my pressNamed(UI elements of proc, "Allow") then return "Allowed through the real notification permission UI"
-      end if
+    -- Enumerating live application-process references races when a short-lived process exits.
+    -- Inspect only the actual permission-dialog owners, tolerating a missing process this pass.
+    repeat with targetName in {"NotificationCenter", "UserNotificationCenter", "pulse-desktop"}
+      try
+        set targetProcess to application process (targetName as text)
+        if exists targetProcess then
+          if my pressNamed(UI elements of targetProcess, "Allow") then return "Allowed through the real notification permission UI"
+        end if
+      end try
     end repeat
   end repeat
   error "The runner did not expose the Allow notification control"
