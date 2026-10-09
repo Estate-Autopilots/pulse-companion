@@ -114,6 +114,11 @@ function card(title, text, live = true) {
 function render() {
   if (state.session?.restoring) {
     root.replaceChildren(card('Opening your saved sign-in…', 'Your account stays protected on this computer. This takes a moment.'));
+  } else if (state.screen === 'update-notes' && updates.candidate) {
+    const notes = card(`What's new in Pulse ${updates.candidate.version}`, updates.candidate.notes, false);
+    const back = Object.assign(document.createElement('button'), { type: 'button', className: 'pc-btn', textContent: 'Back to today' });
+    back.addEventListener('click', () => { state.screen = 'day'; render(); });
+    notes.append(back); root.replaceChildren(notes);
   } else if (state.screen === 'connect') {
     renderConnect(root, { ...state.connect, still: !state.prefs.mascot }, connectHandlers);
     const foot = document.createElement('div');
@@ -145,7 +150,7 @@ function updateUi() {
   if (update) {
     if (updateHost.dataset.version !== update.version || !updateHost.firstElementChild) {
       updateHost.replaceChildren(); updateHost.dataset.version = update.version;
-      updateCard(updateHost, { update, showPip: state.prefs.mascot, onResize: fit, onNotes: () => void invoke('open_pulse', { path: '/apps' }), onInstall: () => void installUpdate(), onLater: () => { updates.later(); store.set('updateLater', updates.laterUntil); } });
+      updateCard(updateHost, { update, showPip: state.prefs.mascot, onResize: fit, onNotes: () => { state.screen = 'update-notes'; render(); }, onInstall: () => void installUpdate(), onLater: () => { updates.later(); store.set('updateLater', updates.laterUntil); } });
     }
     const announcement = `${store.get('updateChannel', 'test')}:${update.version}:${updates.laterUntil}`;
     if (store.get('updateAnnounced', '') !== announcement) { store.set('updateAnnounced', announcement); void invoke('panel_show').catch(() => {}); }

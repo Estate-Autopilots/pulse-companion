@@ -3,7 +3,7 @@ import test from 'node:test';
 import { createRequire } from 'node:module';
 import { createServer } from 'node:http';
 import { readFile, mkdir } from 'node:fs/promises';
-import { dirname, resolve, extname } from 'node:path';
+import { dirname, resolve, extname, sep } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 const desktop = resolve(dirname(fileURLToPath(import.meta.url)), '..');
@@ -17,7 +17,7 @@ test('real quick panel keeps update actions visible and checks automatically', a
       const path = new URL(req.url, 'http://localhost').pathname;
       const base = path.startsWith('/companion/') ? resolve(desktop, '../../packages/companion/src') : resolve(desktop, 'src');
       const file = resolve(base, path === '/' ? 'index.html' : '.' + path.replace(/^\/companion/, ''));
-      assert.ok(file.startsWith(base + '/'));
+      assert.ok(file.startsWith(base + sep));
       res.setHeader('Content-Type', ({ '.js': 'application/javascript', '.css': 'text/css', '.html': 'text/html' })[extname(file)] ?? 'text/plain');
       res.end(await readFile(file));
     } catch { res.writeHead(404).end(); }
@@ -80,6 +80,11 @@ test('real quick panel keeps update actions visible and checks automatically', a
         await page.getByText("What's new", { exact: true }).click(); await assertActions();
         await page.getByText("What's new", { exact: true }).click();
       }
+      await page.getByText("What's new", { exact: true }).click();
+      await page.getByRole('button', { name: 'Full release notes', exact: true }).click();
+      await page.getByRole('heading', { name: "What's new in Pulse 1.0.1", exact: true }).waitFor();
+      await assertActions();
+      await page.getByRole('button', { name: 'Back to today', exact: true }).click();
       if (process.env.PULSE_UPDATE_SCREENSHOT_DIR) {
         await mkdir(process.env.PULSE_UPDATE_SCREENSHOT_DIR, { recursive: true });
         await page.screenshot({ path: resolve(process.env.PULSE_UPDATE_SCREENSHOT_DIR, `${theme}-update.png`) });

@@ -15,7 +15,7 @@ export function updateCard(root, { update, onInstall, onLater, onNotes, onResize
   const notes = update.notes.trim();
   details.append(Object.assign(document.createElement('p'), { className: 'pc-update-notes', textContent: notes.length > 240 ? `${notes.slice(0, 240).trimEnd()}…` : notes }));
   if (notes.length > 240) {
-    const more = Object.assign(document.createElement('button'), { type: 'button', className: 'pc-link', textContent: 'Full release notes in Pulse' });
+    const more = Object.assign(document.createElement('button'), { type: 'button', className: 'pc-link', textContent: 'Full release notes' });
     more.addEventListener('click', onNotes); details.append(more);
   }
   details.addEventListener('toggle', onResize);
