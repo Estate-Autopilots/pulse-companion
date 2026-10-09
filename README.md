@@ -11,7 +11,7 @@ Install an updater-enabled version once from the public releases: choose Windows
 
 From 1.0 every Mac build is signed with one stable Estate Autopilots identity, so updates keep you signed in without Keychain prompts; coming from an earlier test version, Pulse asks you to sign in once more. Saved sign-ins are never read with a Keychain prompt.
 
-Every accepted Companion change is exported through a reviewed client-only allowlist to this repository. A main commit starts hosted builds and required acceptance, then publishes a versioned public release with installers, signed updater bundles, latest.json and SHA256SUMS.txt. The test channel pointer advances only after publication succeeds. Get the apps and installed clients read that same manifest.
+Every accepted Companion change is exported through a reviewed client-only allowlist to this repository. A main commit starts hosted builds and required acceptance. Desktop releases publish installers, signed updater bundles, latest-desktop.json and SHA256SUMS.txt. Phone builds publish a signed APK and an iPhone Simulator zip as a separate pre-release. Get the apps reads the published phone pointer; installed Android phones keep the existing updater channel until the owner approves an explicit promote run.
 
 Build: Node from `.nvmrc`, `corepack enable`, `pnpm install --frozen-lockfile`.
 Desktop: `pnpm --dir apps/desktop run build`, then `pnpm --dir apps/desktop exec tauri build` on Windows or macOS.

@@ -121,6 +121,10 @@ jobs:
           PULSE_SIGNIN_TEXT: ${{ inputs.signin_text || (github.ref == 'refs/heads/main' && 'Username' || 'Username|Sign in to Pulse') }}
         with:
           api-level: 34
+          # Keep the emulator binary reproducible while diagnosing 37.2.12 losing its entire ADB connection.
+          # Android's archive lists stable 36.4.9 as build 14788078.
+          emulator-build: 14788078
+          profile: pixel_7
           arch: x86_64
           target: google_apis
           cores: 2

@@ -39,33 +39,13 @@
                 <category android:name="android.intent.category.LAUNCHER" />
             </intent-filter>
 
-            <!-- Pulse links (e-mails, chats, the browser) open in the app. Install pages, the API and the client
-                 portal stay in the browser. Verified by https://pulse.estateautopilots.com/.well-known/assetlinks.json -->
+            <!-- All production Pulse links open in the app, including routes added by future web releases.
+                 Verified by https://pulse.estateautopilots.com/.well-known/assetlinks.json -->
             <intent-filter android:autoVerify="true">
                 <action android:name="android.intent.action.VIEW" />
                 <category android:name="android.intent.category.DEFAULT" />
                 <category android:name="android.intent.category.BROWSABLE" />
                 <data android:scheme="https" android:host="pulse.estateautopilots.com" />
-                <data android:path="/" />
-                <data android:pathPrefix="/dashboard" />
-                <data android:pathPrefix="/me" />
-                <data android:pathPrefix="/tasks" />
-                <data android:pathPrefix="/chats" />
-                <data android:pathPrefix="/inbox" />
-                <data android:pathPrefix="/notifications" />
-                <data android:pathPrefix="/people" />
-                <data android:pathPrefix="/projects" />
-                <data android:pathPrefix="/clients" />
-                <data android:pathPrefix="/contacts" />
-                <data android:pathPrefix="/hr" />
-                <data android:pathPrefix="/settings" />
-                <data android:pathPrefix="/account" />
-                <data android:pathPrefix="/my-week" />
-                <data android:pathPrefix="/leadership" />
-                <data android:pathPrefix="/finance" />
-                <data android:pathPrefix="/map" />
-                <data android:pathPrefix="/login" />
-                <data android:pathPrefix="/connect" />
             </intent-filter>
         </activity>
 

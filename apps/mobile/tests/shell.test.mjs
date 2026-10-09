@@ -59,12 +59,12 @@ test('the Android manifest asks for no tracking and keeps credentials on the pho
   assert.equal((manifest.match(/android:exported="true"/g) ?? []).length, 1, 'only the main activity is exported');
 });
 
-test('Pulse links open in the app; install pages, the API and the client portal do not', () => {
+test('all production Pulse routes open in the app, including future web routes', () => {
   assert.match(manifest, /android:autoVerify="true"/);
   assert.match(manifest, /android:host="pulse\.estateautopilots\.com"/);
-  const prefixes = [...manifest.matchAll(/android:pathPrefix="([^"]+)"/g)].map(m => m[1]);
-  for (const p of ['/dashboard', '/me', '/tasks', '/chats', '/inbox', '/people', '/hr', '/settings']) assert.ok(prefixes.includes(p), p);
-  for (const p of prefixes) assert.doesNotMatch(p, /^\/(apps|api|portal|_next|\.well-known)/);
+  assert.doesNotMatch(manifest, /android:path(?:Prefix|Pattern)?=/, 'App Links cover every production route');
+  const hosts = [...manifest.matchAll(/android:host="([^"]+)"/g)].map(m => m[1]);
+  assert.deepEqual(hosts, ['pulse.estateautopilots.com'], 'external domains stay outside the app');
   const links = resolve(repo, 'apps/web/app/lib/assetlinks.json');
   if (existsSync(links)) {
     const target = JSON.parse(readFileSync(links, 'utf8'))[0].target;

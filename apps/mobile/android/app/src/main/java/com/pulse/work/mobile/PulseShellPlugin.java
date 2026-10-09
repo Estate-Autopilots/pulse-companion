@@ -302,9 +302,14 @@ public class PulseShellPlugin extends Plugin {
         }
         Handler main = new Handler(Looper.getMainLooper());
         final boolean[] done = { false };
+        CancellationSignal cancellation = new CancellationSignal();
+        android.location.LocationListener[] legacy = { null };
         java.util.function.Consumer<Location> answer = location -> {
             if (done[0]) return;
             done[0] = true;
+            main.removeCallbacksAndMessages(null);
+            cancellation.cancel();
+            if (legacy[0] != null) lm.removeUpdates(legacy[0]);
             if (location == null) {
                 call.reject("Pulse could not read your position. Try again by a window.", "unavailable");
                 return;
@@ -318,14 +323,15 @@ public class PulseShellPlugin extends Plugin {
         };
         main.postDelayed(() -> answer.accept(null), 20000);
         if (Build.VERSION.SDK_INT >= 30) {
-            lm.getCurrentLocation(provider, new CancellationSignal(), getContext().getMainExecutor(), answer);
+            lm.getCurrentLocation(provider, cancellation, getContext().getMainExecutor(), answer);
         } else {
-            lm.requestSingleUpdate(provider, new android.location.LocationListener() {
+            legacy[0] = new android.location.LocationListener() {
                 @Override
                 public void onLocationChanged(Location location) {
                     answer.accept(location);
                 }
-            }, Looper.getMainLooper());
+            };
+            lm.requestSingleUpdate(provider, legacy[0], Looper.getMainLooper());
         }
     }
 
