@@ -127,8 +127,23 @@ sleep 3
 adb shell am start -W -n "$ACT" >/dev/null
 wait_text "$SIGNIN" 120
 shot 2-cold-launch-sign-in-dark
+# Also capture 390×844 at the same 3× density: the real WebView, not a browser bridge stand-in.
+adb shell wm size 1170x2532
+adb shell am force-stop $PKG
 adb shell cmd uimode night no || true
-pass cold_launch_sign_in
+sleep 3
+adb shell am start -W -n "$ACT" >/dev/null
+wait_text "$SIGNIN" 120
+shot 2-cold-launch-sign-in-390-light
+adb shell am force-stop $PKG
+adb shell cmd uimode night yes || true
+sleep 3
+adb shell am start -W -n "$ACT" >/dev/null
+wait_text "$SIGNIN" 120
+shot 2-cold-launch-sign-in-390-dark
+adb shell wm size 1080x2340
+adb shell cmd uimode night no || true
+pass cold_launch_sign_in "360x780 and 390x844, light and dark"
 
 ready
 # 3. Back: through Pulse's history, then minimise at the start (never a blank page, never an exit).
