@@ -21,6 +21,6 @@ test('hosted emulator logging preserves arguments, both output streams and the e
     assert.equal(run.status, 3);
     assert.equal(run.stdout, '');
     assert.equal(run.stderr, '');
-    assert.equal(readFileSync(join(workspace, 'screens/emulator-host.log'), 'utf8'), 'arg:-avd\narg:Test phone\nnative diagnostic\n');
+    assert.equal(readFileSync(join(workspace, 'screens/emulator-host.log'), 'utf8'), 'arg:-avd\narg:Test phone\nnative diagnostic\nPulse emulator exit status: 3\n');
   } finally { rmSync(root, { recursive: true, force: true }); }
 });
