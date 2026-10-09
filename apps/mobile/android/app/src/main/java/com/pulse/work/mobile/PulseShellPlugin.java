@@ -262,10 +262,40 @@ public class PulseShellPlugin extends Plugin {
         });
     }
 
-    /** Office Wi-Fi for check-in: name and access point. Needs the location permission (asked on a tap). */
+    /** Only this device's existing presence choice and HR office rules. Never exports the device credential. */
+    @PluginMethod
+    public void presencePreferences(PluginCall call) {
+        WORK.execute(() -> {
+            try {
+                String token = Gateway.accessToken(getContext());
+                Boolean enabled = call.getBoolean("enabled");
+                if (enabled != null) Gateway.post("companion/presence", new JSONObject().put("consent", enabled).put("autoConsent", false).put("consentOnly", true), token);
+                call.resolve(new JSObject(Gateway.get("companion/presence", token).toString()));
+            } catch (Exception e) { call.reject("Pulse could not read your office presence choice. Try again.", "presence"); }
+        });
+    }
+
+    private void withPresenceConsent(PluginCall call, Runnable read) {
+        WORK.execute(() -> {
+            try {
+                if (!Gateway.get("companion/presence", Gateway.accessToken(getContext())).optBoolean("enabled")) {
+                    call.reject("Turn on office check-in helpers in Settings → Devices → This phone first.", "consent");
+                    return;
+                }
+                getActivity().runOnUiThread(read);
+            } catch (Exception e) { call.reject("Pulse could not confirm your office presence choice. Try again.", "presence"); }
+        });
+    }
+
+    /** Office Wi-Fi for check-in: name and access point. Needs consent and a permission asked on a tap. */
     @PluginMethod
     @SuppressWarnings("deprecation")
     public void wifi(PluginCall call) {
+        withPresenceConsent(call, () -> readWifi(call));
+    }
+
+    @SuppressWarnings("deprecation")
+    private void readWifi(PluginCall call) {
         JSObject r = new JSObject();
         if (getPermissionState("location") != PermissionState.GRANTED) {
             r.put("permission", "denied");
@@ -289,6 +319,11 @@ public class PulseShellPlugin extends Plugin {
     @PluginMethod
     @SuppressWarnings({ "deprecation", "MissingPermission" })
     public void location(PluginCall call) {
+        withPresenceConsent(call, () -> readLocation(call));
+    }
+
+    @SuppressWarnings({ "deprecation", "MissingPermission" })
+    private void readLocation(PluginCall call) {
         if (getPermissionState("location") != PermissionState.GRANTED) {
             call.reject("Location permission is off for Pulse.", "permission");
             return;

@@ -34,6 +34,7 @@ public class PulseShellPlugin: CAPPlugin, CAPBridgedPlugin, CLLocationManagerDel
         CAPPluginMethod(name: "setBadge", returnType: CAPPluginReturnPromise),
         CAPPluginMethod(name: "setTheme", returnType: CAPPluginReturnPromise),
         CAPPluginMethod(name: "setPushToken", returnType: CAPPluginReturnPromise),
+        CAPPluginMethod(name: "presencePreferences", returnType: CAPPluginReturnPromise),
         CAPPluginMethod(name: "wifi", returnType: CAPPluginReturnPromise),
         CAPPluginMethod(name: "location", returnType: CAPPluginReturnPromise),
         CAPPluginMethod(name: "checkUpdate", returnType: CAPPluginReturnPromise),
@@ -52,6 +53,7 @@ public class PulseShellPlugin: CAPPlugin, CAPBridgedPlugin, CLLocationManagerDel
     private var accessUntil = Date.distantPast
     private var locator: CLLocationManager?
     private var locationCall: CAPPluginCall?
+    private var locationTimeout: DispatchWorkItem?
 
     // MARK: Keychain (this device only, readable after the first unlock)
     private let service = "com.pulse.work.mobile.shell"
@@ -231,45 +233,90 @@ public class PulseShellPlugin: CAPPlugin, CAPBridgedPlugin, CLLocationManagerDel
     }
 
     /// Reading the Wi-Fi name on iPhone needs the "Access Wi-Fi Information" entitlement of a signed build.
+    @objc func presencePreferences(_ call: CAPPluginCall) {
+        accessToken { token in
+            guard let token = token else { return call.reject("Sign in to register this phone first.", "presence") }
+            let read = {
+                self.gateway("companion/presence", nil, bearer: token) { status, json in
+                    guard status == 200 else { return call.reject("Pulse could not read your office presence choice. Try again.", "presence") }
+                    call.resolve(json)
+                }
+            }
+            if let enabled = call.getBool("enabled") {
+                self.gateway("companion/presence", ["consent": enabled, "autoConsent": false, "consentOnly": true], bearer: token) { status, _ in
+                    guard status == 200 else { return call.reject("Pulse could not save your office presence choice. Try again.", "presence") }
+                    read()
+                }
+            } else { read() }
+        }
+    }
+
     @objc func wifi(_ call: CAPPluginCall) {
         call.resolve(["permission": "unsupported", "connected": false])
     }
 
     @objc func location(_ call: CAPPluginCall) {
+        accessToken { token in
+            guard let token = token else { return call.reject("Sign in to register this phone first.", "presence") }
+            self.gateway("companion/presence", nil, bearer: token) { status, json in
+                guard status == 200, json["enabled"] as? Bool == true else { return call.reject("Turn on office check-in helpers in Settings → Devices → This phone first.", "consent") }
+                self.readLocation(call)
+            }
+        }
+    }
+
+    private func readLocation(_ call: CAPPluginCall) {
         DispatchQueue.main.async {
+            guard self.locationCall == nil else { return call.reject("An office location check is already running.", "busy") }
             let manager = CLLocationManager()
             manager.delegate = self
             manager.desiredAccuracy = kCLLocationAccuracyHundredMeters
             self.locator = manager
             self.locationCall = call
+            let timeout = DispatchWorkItem { [weak self] in
+                guard let self = self, let pending = self.locationCall else { return }
+                self.finishLocation()
+                pending.reject("Pulse could not read your position. Try again by a window.", "unavailable")
+            }
+            self.locationTimeout = timeout
+            DispatchQueue.main.asyncAfter(deadline: .now() + 20, execute: timeout)
             let state = manager.authorizationStatus
             if state == .notDetermined {
                 manager.requestWhenInUseAuthorization()
             } else if state == .authorizedWhenInUse || state == .authorizedAlways {
                 manager.requestLocation()
             } else {
-                self.locationCall = nil
+                self.finishLocation()
                 call.reject("Location permission is off for Pulse.", "permission")
             }
         }
+    }
+
+    private func finishLocation() {
+        locationTimeout?.cancel()
+        locationTimeout = nil
+        locator?.stopUpdatingLocation()
+        locator?.delegate = nil
+        locator = nil
+        locationCall = nil
     }
 
     public func locationManagerDidChangeAuthorization(_ manager: CLLocationManager) {
         guard locationCall != nil else { return }
         let state = manager.authorizationStatus
         if state == .authorizedWhenInUse || state == .authorizedAlways { manager.requestLocation() }
-        else if state != .notDetermined { locationCall?.reject("Location permission is off for Pulse.", "permission"); locationCall = nil }
+        else if state != .notDetermined { locationCall?.reject("Location permission is off for Pulse.", "permission"); finishLocation() }
     }
 
     public func locationManager(_ manager: CLLocationManager, didUpdateLocations locations: [CLLocation]) {
         guard let call = locationCall, let l = locations.last else { return }
-        locationCall = nil
+        finishLocation()
         call.resolve(["lat": l.coordinate.latitude, "lng": l.coordinate.longitude, "accuracy": l.horizontalAccuracy, "at": Int(l.timestamp.timeIntervalSince1970 * 1000)])
     }
 
     public func locationManager(_ manager: CLLocationManager, didFailWithError error: Error) {
         locationCall?.reject("Pulse could not read your position. Try again by a window.", "unavailable")
-        locationCall = nil
+        finishLocation()
     }
 
     /// iPhone apps update through TestFlight or the App Store, never by downloading an app file.
