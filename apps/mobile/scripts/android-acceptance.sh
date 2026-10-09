@@ -18,6 +18,8 @@ ACT=$PKG/.MainActivity
 mkdir -p "$OUT"
 : > "$OUT/acceptance.txt"
 
+# The emulator can drop off adb for a moment under load: every phase starts by waiting for it to be fully booted.
+ready() { adb wait-for-device; until [ "$(adb shell getprop sys.boot_completed 2>/dev/null | tr -d '\r')" = 1 ]; do sleep 2; done; }
 shot() { adb exec-out screencap -p > "$OUT/$1.png"; }
 dump() { adb shell uiautomator dump /sdcard/pulse-ui.xml >/dev/null 2>&1 || true; adb shell cat /sdcard/pulse-ui.xml 2>/dev/null || true; }
 # Wait until the screen (including the page inside the WebView) shows text matching a pattern.
@@ -82,6 +84,7 @@ else
   echo "upgrade_in_place=skipped (validation build is not signed with the Pulse key)" | tee -a "$OUT/acceptance.txt"
 fi
 
+ready
 # 2. Cold launch: the sign-in page, light and dark.
 adb shell pm clear $PKG >/dev/null
 adb shell cmd uimode night no || true
@@ -96,6 +99,7 @@ shot 2-cold-launch-sign-in-dark
 adb shell cmd uimode night no || true
 pass cold_launch_sign_in
 
+ready
 # 3. Back: through Pulse's history, then minimise at the start (never a blank page, never an exit).
 adb shell am start -W -n "$ACT" -a android.intent.action.VIEW -d "https://pulse.estateautopilots.com/apps/android" >/dev/null
 wait_text 'Pulse for Android' 60
@@ -114,6 +118,7 @@ wait_text "$SIGNIN" 30
 shot 3-back-4-reopened
 pass back_button "history, then minimise; process kept"
 
+ready
 # 4. Offline: the shell's own screen with Retry; Pulse comes back when the network does.
 network off
 sleep 4
@@ -130,6 +135,7 @@ wait_text "$SIGNIN" 120
 shot 4-offline-recovered
 pass offline_screen "own screen, Retry, automatic recovery"
 
+ready
 # 5. Notifications: Android's permission prompt, Allow, then Pulse confirms with a notification.
 adb shell pm revoke $PKG android.permission.POST_NOTIFICATIONS 2>/dev/null || true
 adb shell pm clear-permission-flags $PKG android.permission.POST_NOTIFICATIONS user-set user-fixed 2>/dev/null || true
