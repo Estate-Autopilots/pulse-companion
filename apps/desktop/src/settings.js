@@ -211,16 +211,19 @@ async function account() {
 async function updates() {
   const s = page('Updates & about', 'Pulse updates itself safely: your sign-in, settings and saved work stay put.');
   const channel = store.get('updateChannel', 'test');
-  const result = el('span', 'hint', `Pulse ${state.info.version}`);
-  const check = button('Check now', async () => {
-    check.disabled = true; result.textContent = 'Checking…';
-    try {
-      const found = await invoke('update_check', { channel: store.get('updateChannel', 'test') });
-      if (!found) result.textContent = `You’re up to date · Pulse ${state.info.version}`;
-      else { result.textContent = `Pulse ${found.version} is ready — ${found.notes}`; check.replaceWith(button('Install and restart', () => { void emit('pulse:check-updates'); void invoke('panel_show'); toast('Pip will install it from the quick panel when you are not in the middle of something.'); }, 'btn primary')); }
-    } catch (e) { result.textContent = failure(e).message; } finally { check.disabled = false; }
-  }, 'btn');
-  const versionRow = row('Pulse', null, check); versionRow.querySelector('.text').append(result);
+  const result = el('span', 'hint'); result.dataset.updateStatus = '';
+  const check = button('Check now', () => void emit('pulse:check-updates'), 'btn'); check.dataset.updateCheck = '';
+  const install = button('Install and restart', () => { void emit('pulse:install-update'); void invoke('panel_show'); }, 'btn primary'); install.dataset.updateInstall = '';
+  const controls = el('div', 'update-controls'); controls.append(check, install);
+  const refreshStatus = (snapshot = store.get('updateState', {})) => {
+    if (snapshot.channel !== store.get('updateChannel', 'test')) snapshot = {};
+    result.textContent = snapshot.status || 'Pulse checks on launch and every four hours.';
+    check.disabled = !!snapshot.running;
+    install.hidden = !snapshot.version || snapshot.running;
+  };
+  refreshStatus();
+  void emit('pulse:request-update-state');
+  const versionRow = row('Pulse', null, controls); versionRow.querySelector('.text').append(result);
   s.append(group(null, versionRow,
     row('Update channel', 'Test updates arrive first; Stable waits until they are proven.', segmented([['test', 'Test'], ['stable', 'Stable']], channel, (v) => { store.set('updateChannel', v); void emit('pulse:check-updates'); }, 'Update channel')),
   ));
@@ -271,6 +274,13 @@ async function go(section, focus = false) {
 }
 window.pulseSettings = { go: (s) => void go(s, true) };
 async function boot() {
+  await window.__TAURI__.event?.listen('pulse:update-state', ({ payload }) => {
+    const result = main.querySelector('[data-update-status]');
+    if (!result || payload.channel !== store.get('updateChannel', 'test')) return;
+    result.textContent = payload.status || 'Pulse checks on launch and every four hours.';
+    main.querySelector('[data-update-check]').disabled = !!payload.running;
+    main.querySelector('[data-update-install]').hidden = !payload.version || payload.running;
+  });
   try { state.info = await invoke('app_info'); } catch { /* defaults */ }
   document.documentElement.dataset.platform = state.info.platform;
   if (state.info.launch?.theme) document.documentElement.dataset.theme = state.info.launch.theme;

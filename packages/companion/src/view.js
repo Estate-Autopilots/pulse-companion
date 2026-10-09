@@ -34,7 +34,8 @@ export function actionRequest(action, extra = {}) {
 }
 
 /** Which actions make sense in a state; the API still has the last word (409 when they no longer do). */
-export function allowedActions(state) {
+export function allowedActions(state, attendanceEnabled) {
+  if (attendanceEnabled !== true) return [];
   if (state === 'in') return ['break-start', 'check-out'];
   if (state === 'break') return ['break-end', 'check-out'];
   return ['check-in'];
@@ -93,6 +94,7 @@ function greeting(minutes, first) {
  */
 export function deriveView(payload, at = Date.now(), options = {}) {
   if (!payload) return { state: 'loading', mood: 'idle', title: 'Waking up…', subtitle: '', greeting: '', timer: null, chip: { tone: 'neutral', text: 'Connecting' }, actions: [], showModes: false, footer: '', next: null, waiting: null, late: 0 };
+  if (payload.attendanceEnabled !== true) return { state: 'disabled', mood: 'idle', title: 'Attendance is off for your organisation', subtitle: '', greeting: '', timer: null, chip: { tone: 'neutral', text: 'Attendance off' }, actions: [], showModes: false, footer: '', next: null, waiting: null, late: 0, pending: false };
   const offset = payload.utcOffsetMinutes ?? 330;
   const minutes = wallMinutes(at, offset);
   const night = minutes >= 22 * 60 || minutes < 6 * 60;
@@ -157,6 +159,7 @@ function clockOf(iso, offset) {
 /** Tray / badge text: the shortest honest summary of the day. */
 export function badge(payload, at = Date.now()) {
   if (!payload) return { text: '', tone: 'neutral', title: 'Pulse · not connected' };
+  if (payload.attendanceEnabled !== true) return { text: '', tone: 'neutral', title: 'Attendance is off for your organisation' };
   const live = liveSeconds(payload.entry, at);
   if (payload.state === 'in') return { text: `${Math.floor(live.worked / 3600)}:${String(Math.floor(live.worked / 60) % 60).padStart(2, '0')}`, tone: 'success', title: `Pulse · checked in · ${duration(live.worked)} worked` };
   if (payload.state === 'break') return { text: 'BRK', tone: 'info', title: `Pulse · on a break · ${duration(live.onBreak)}` };

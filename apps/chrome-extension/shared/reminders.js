@@ -24,7 +24,7 @@ export function prefsWith(saved) {
 
 /** Reminders due at `at` that have not been shown yet (`shown` is a Set or array of reminder ids). */
 export function dueReminders(payload, prefs, at, shown = []) {
-  if (!payload) return [];
+  if (!payload || payload.attendanceEnabled !== true) return [];
   const seen = new Set(shown), out = [];
   const p = prefsWith(prefs), state = payload.state;
   const start = Date.parse(payload.shiftStartsAt ?? ''), end = Date.parse(payload.shiftEndsAt ?? '');
@@ -48,7 +48,7 @@ export function dueReminders(payload, prefs, at, shown = []) {
  * check-in reminder at their shift start.
  */
 export function reminderPlan(payload, prefs, at, days = 7) {
-  if (!payload) return [];
+  if (!payload || payload.attendanceEnabled !== true) return [];
   const p = prefsWith(prefs), plan = [];
   const start = Date.parse(payload.shiftStartsAt ?? ''), end = Date.parse(payload.shiftEndsAt ?? '');
   if (p.checkIn && payload.state === 'out' && payload.shift?.workingDay && Number.isFinite(start) && start > at) {
@@ -73,7 +73,7 @@ export function reminderPlan(payload, prefs, at, days = 7) {
 /** Desktop: should the panel slide up by itself now (workday start), and under which key so it happens once? */
 export function shouldPopUp(payload, prefs, at, shown = []) {
   const p = prefsWith(prefs);
-  if (!p.popAtStart || !payload || payload.state !== 'out' || !payload.shift?.workingDay) return null;
+  if (!p.popAtStart || !payload || payload.attendanceEnabled !== true || payload.state !== 'out' || !payload.shift?.workingDay) return null;
   const start = Date.parse(payload.shiftStartsAt ?? '');
   const key = `pop:${payload.today}`;
   if (!Number.isFinite(start) || new Set(shown).has(key)) return null;

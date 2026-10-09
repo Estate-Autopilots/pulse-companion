@@ -30,7 +30,7 @@ jobs:
         run: |
           New-Item -ItemType Directory -Force screens | Out-Null
           $run = gh api "repos/$env:GITHUB_REPOSITORY/actions/runs/$env:BUILD_RUN" | ConvertFrom-Json
-          if ($run.name -ne 'Pulse Companion builds' -or $run.head_branch -ne 'main' -or $env:ARTIFACT_NAME -ne "companion-desktop-windows-$($run.head_sha)") { throw 'Wrong build artifact' }
+          if (@('Pulse Companion builds', 'Desktop updater release') -notcontains $run.name -or $run.head_branch -ne 'main' -or $env:ARTIFACT_NAME -ne "companion-desktop-windows-$($run.head_sha)") { throw 'Wrong build artifact' }
           $exe = Get-ChildItem archive -Filter *.exe -Recurse | Select-Object -First 1
           if (-not $exe) { throw 'Installer missing' }
           $hash = (Get-FileHash $exe.FullName -Algorithm SHA256).Hash.ToLowerInvariant()

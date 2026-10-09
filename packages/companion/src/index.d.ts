@@ -9,7 +9,7 @@ export type CompanionEntry = { id: string | null; date: string; in: string; out:
 export type Office = { id: string; name: string; lat: number; lng: number; radius: number; wifi: { ssid: string; bssids: string[] }[] };
 export type Site = { id: string; name: string; lat: number; lng: number; radius: number; precision: 'exact' | 'building' };
 export type CompanionPayload = {
-  demo?: boolean; pending?: boolean;
+  demo?: boolean; pending?: boolean; attendanceEnabled?: boolean;
   person: { id: string; name: string; firstName: string };
   now: string; today: string; clock: string; timezone: string; utcOffsetMinutes: number;
   shift: { start: string; end: string; graceMinutes: number; onTimeBy: string; workingDay: boolean; mode: string };
@@ -23,7 +23,7 @@ export type CompanionPayload = {
 };
 
 export type View = {
-  state: CompanionState | 'loading'; mood: Mood; title: string; subtitle: string; greeting: string;
+  state: CompanionState | 'loading' | 'disabled'; mood: Mood; title: string; subtitle: string; greeting: string;
   timer: { seconds: number; display: string; label: string; running: boolean } | null;
   chip: { tone: 'success' | 'warning' | 'info' | 'neutral'; text: string };
   actions: { id: ActionId; label: string; primary: boolean }[];
@@ -36,7 +36,7 @@ export const MODES: Record<Mode, string>;
 export function clockOffset(payload: CompanionPayload | null, localNow?: number): number;
 export function liveSeconds(entry: CompanionEntry | null, at: number): { worked: number; onBreak: number; breakTotal: number };
 export function actionRequest(action: ActionId, extra?: Record<string, unknown>): { path: string; body: Record<string, unknown> };
-export function allowedActions(state: CompanionState): ActionId[];
+export function allowedActions(state: CompanionState, attendanceEnabled?: boolean): ActionId[];
 export function applyLocal(payload: CompanionPayload, action: ActionId, at: number, extra?: Record<string, unknown>): CompanionPayload;
 export function celebration(payload: CompanionPayload | null): string | null;
 export function deriveView(payload: CompanionPayload | null, at?: number, options?: { celebrate?: boolean }): View;

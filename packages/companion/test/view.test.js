@@ -112,7 +112,9 @@ test('action requests match the My desk API', () => {
   assert.deepEqual(actionRequest('break-end'), { path: 'attendance/break', body: { action: 'end' } });
   assert.deepEqual(actionRequest('check-out'), { path: 'attendance/check-out', body: {} });
   assert.throws(() => actionRequest('nap'));
-  assert.deepEqual(allowedActions('break'), ['break-end', 'check-out']);
+  assert.deepEqual(allowedActions('break', true), ['break-end', 'check-out']);
+  assert.deepEqual(allowedActions('break', false), []);
+  assert.deepEqual(allowedActions('break'), []);
 });
 
 test('badge and clock offset', () => {
@@ -123,6 +125,20 @@ test('badge and clock offset', () => {
   assert.equal(badge(null).text, '');
   assert.equal(clockOffset({ now: new Date(1000).toISOString() }, 400), 600);
   assert.equal(clockOffset(null), 0);
+});
+
+test('attendance gate defaults off unless the payload explicitly enables it', () => {
+  for (const attendanceEnabled of [false, undefined]) {
+    const p = { ...demoPayload('in', IST('11:00')), attendanceEnabled };
+    const view = deriveView(p, IST('11:00'));
+    assert.equal(view.state, 'disabled');
+    assert.equal(view.title, 'Attendance is off for your organisation');
+    assert.deepEqual(view.actions, []);
+    assert.equal(view.timer, null);
+    assert.deepEqual(badge(p), { text: '', tone: 'neutral', title: 'Attendance is off for your organisation' });
+  }
+  const enabled = deriveView(demoPayload('out', IST('09:40')), IST('09:40'));
+  assert.deepEqual(enabled.actions.map((a) => a.id), ['check-in']);
 });
 
 test('loading view before the first answer', () => {

@@ -4,7 +4,7 @@
 import { applyLocal, badge, celebration, clockOffset, deriveView, demoClient, dueReminders, prefsWith, shouldPopUp, projected } from './companion/index.js';
 import { DesktopSession } from './companion/desktop-session.js';
 import { UpdateController, canOfferUpdate } from './companion/updates.js';
-import { updateCard } from './companion/update-card.js';
+import { updateCard } from './update-card.js';
 import { mountCommunications } from './companion/communications.js';
 import { mountPanel, renderConnect } from './companion/panel.js';
 import { mountFeatures } from './companion/features.js';
@@ -14,6 +14,7 @@ import { DEMO_CONVERSATION, demoCall, demoSnapshot } from './demo-comms.js';
 const invoke = (cmd, args) => window.__TAURI__.core.invoke(cmd, args);
 const listen = (name, run) => { try { return window.__TAURI__.event?.listen(name, run)?.catch?.(() => {}); } catch { return null; } };
 const root = document.getElementById('app');
+const updateHost = document.getElementById('update-host');
 const state = {
   session: null, payload: null, offset: 0, demo: null, screen: 'day', busy: false, status: null, celebrate: false,
   connect: { phase: 'start' }, prefs: prefsWith(store.get('prefs', {})), mode: store.get('mode', null), queue: [], legacyQueue: store.get('queue', []).length > 0,
@@ -46,7 +47,7 @@ const panel = mountPanel(panelHost, {
 });
 
 const updateContext = () => ({ signedIn: !!state.session?.signedIn, demo: !!state.demo, busy: state.busy || state.installing, pending: state.queue.length > 0 || state.syncing, payload: state.payload });
-const updates = new UpdateController({ check: () => invoke('update_check', { channel: store.get('updateChannel', 'test') }), prepare: () => invoke('update_prepare'), clock: () => now(), changed: () => updateUi() });
+const updates = new UpdateController({ check: () => invoke('update_check', { channel: store.get('updateChannel', 'test') }), prepare: () => invoke('update_prepare'), clock: Date.now, changed: () => updateUi() });
 updates.laterUntil = store.get('updateLater', 0);
 async function installUpdate() {
   if (!updates.offer(updateContext())) return;
@@ -102,7 +103,7 @@ function connectionStatus() {
 
 // ---------------------------------------------------------------------------------------------------- render
 function fit() {
-  requestAnimationFrame(() => { const h = Math.ceil(root.getBoundingClientRect().height); if (h > 0) void invoke('panel_fit', { height: h }).catch(() => {}); });
+  requestAnimationFrame(() => { const h = Math.ceil(root.scrollHeight + updateHost.getBoundingClientRect().height); if (h > 0) void invoke('panel_fit', { height: h }).catch(() => {}); });
 }
 function card(title, text, live = true) {
   const node = Object.assign(document.createElement('section'), { className: 'pc pc-notice' });
@@ -136,10 +137,16 @@ function render() {
   updateUi();
 }
 function updateUi() {
-  root.querySelector('.pc-update')?.remove();
+  const snapshot = { channel: store.get('updateChannel', 'test'), status: updates.status, running: updates.running, version: updates.candidate?.version ?? null };
+  store.set('updateState', snapshot);
+  void window.__TAURI__.event?.emit('pulse:update-state', snapshot)?.catch?.(() => {});
   const update = updates.offer(updateContext());
+  if (!update) updateHost.replaceChildren();
   if (update) {
-    updateCard(root, { update, showPip: state.prefs.mascot, onInstall: () => void installUpdate(), onLater: () => { updates.later(); store.set('updateLater', updates.laterUntil); } });
+    if (updateHost.dataset.version !== update.version || !updateHost.firstElementChild) {
+      updateHost.replaceChildren(); updateHost.dataset.version = update.version;
+      updateCard(updateHost, { update, showPip: state.prefs.mascot, onResize: fit, onNotes: () => void invoke('open_pulse', { path: '/apps' }), onInstall: () => void installUpdate(), onLater: () => { updates.later(); store.set('updateLater', updates.laterUntil); } });
+    }
     const announcement = `${store.get('updateChannel', 'test')}:${update.version}:${updates.laterUntil}`;
     if (store.get('updateAnnounced', '') !== announcement) { store.set('updateAnnounced', announcement); void invoke('panel_show').catch(() => {}); }
   }
@@ -310,7 +317,8 @@ async function boot() {
   void listen('pulse:signed-out', async () => { state.session = await invoke('companion_session'); if (!state.session.signedIn) { restoreAttendance(state.session); state.payload = null; state.screen = 'connect'; render(); tray(); } });
   void listen('pulse:presence', () => void refresh());
   void listen('pulse:install-update', () => void installUpdate());
-  void listen('pulse:check-updates', () => void updates.poll(updateContext(), true));
+  void listen('pulse:request-update-state', () => updateUi());
+  void listen('pulse:check-updates', () => { if (store.get('updateState', {}).channel !== store.get('updateChannel', 'test')) updates.reset(); void updates.poll(updateContext(), true); });
   if (state.session.restoring) void finishSessionRestore();
   // --demo (runner screenshots, demos): synthetic day, inbox and chats on a chosen tab.
   if (launch.demo) {
@@ -322,9 +330,9 @@ async function boot() {
     else if (launch.tab === 'conversation') communications.open(DEMO_CONVERSATION);
     return;
   }
+  void updates.poll(updateContext());
   void inboxTick();
   await refresh();
-  void updates.poll(updateContext());
 }
 
 async function finishSessionRestore() {

@@ -1,6 +1,6 @@
 [package]
 name = "pulse-desktop"
-version = "1.0.0"
+version = "1.0.1"
 description = "Pulse Companion: check in, take a break and check out from the tray"
 authors = ["Estate Autopilots"]
 edition = "2021"
