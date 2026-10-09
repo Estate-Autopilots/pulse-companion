@@ -21,7 +21,7 @@ const state = {
 applyTheme();
 const communications = mountCommunications(root, {
   call: (path, body) => state.demo ? demoCall(path, body) : invoke('companion_request', { path, body: body ?? null }).catch((e) => { throw failure(e); }),
-  onFixPings: () => void invoke('companion_ping_fix').then((r) => { communications.pingIssue(r?.ok ? null : r?.message ?? null); if (r?.ok) communications.status('Pings are on.'); }).catch((e) => communications.status(failure(e).message)),
+  onFixPings: () => void invoke('companion_ping_fix').then((r) => { communications.pingIssue(r?.ok ? null : r?.message ?? null); if (r?.ok) communications.status('Pings are on.', { transient: true }); }).catch((e) => communications.status(failure(e).message)),
   onOpen: (href) => void invoke('open_pulse', { path: href }), onSwitch: () => void signOut(), onResize: fit,
   isVisible: () => state.panelVisible !== false && document.visibilityState === 'visible', store,
   tools: [

@@ -52,29 +52,52 @@ pub struct Companion {
     notice: Mutex<Option<&'static str>>,
 }
 
-// The OS credential store keeps the device credential. macOS ties a Keychain item to the signing identity that
-// created it, so builds signed with Pulse's stable identity use their own entry; an older build's entry is moved
-// over when it can be read silently. Restoring never shows a Keychain password prompt (see lib.rs quiet_keychain).
+// The OS credential store keeps the device credential. Windows: Credential Manager, which survives updates.
+// macOS: the login Keychain through Apple's security tool, so every Pulse build (each update has a new code hash and,
+// without an Apple Team ID, its own Keychain partition) reads it without a prompt; see core mac_keychain. Older
+// builds' own items are read only with Keychain prompts disabled and moved over; if locked, the person signs in again.
 #[cfg(target_os = "macos")]
-const CURRENT: &str = "companion-device-v2";
+const CURRENT: &str = "companion-device-v3";
+#[cfg(target_os = "macos")]
+const OLDER: [&str; 2] = ["companion-device-v2", ENTRY];
 #[cfg(windows)]
 const CURRENT: &str = ENTRY;
 
 #[cfg(any(windows, target_os = "macos"))]
-fn lookup(entry: &str) -> Lookup<Tokens> {
+fn keyring_lookup(entry: &str) -> Lookup<Tokens> {
     match keyring::Entry::new(SERVICE, entry).map(|e| e.get_password()) {
         Ok(Ok(secret)) => serde_json::from_str(&secret).map(Lookup::Found).unwrap_or(Lookup::Missing),
         Ok(Err(keyring::Error::NoEntry)) => Lookup::Missing,
         _ => Lookup::Unreadable,
     }
 }
+#[cfg(target_os = "macos")]
+fn lookup(entry: &str) -> Lookup<Tokens> {
+    match pulse_desktop_core::mac_keychain::read(SERVICE, entry) {
+        Lookup::Found(secret) => serde_json::from_str(&secret).map(Lookup::Found).unwrap_or(Lookup::Missing),
+        Lookup::Missing => Lookup::Missing,
+        Lookup::Unreadable => Lookup::Unreadable,
+    }
+}
+#[cfg(windows)]
+fn lookup(entry: &str) -> Lookup<Tokens> { keyring_lookup(entry) }
+
 #[cfg(any(windows, target_os = "macos"))]
 fn load_tokens() -> (Option<Tokens>, Option<&'static str>) {
-    let (tokens, migrate, notice) = restore_choice(lookup(CURRENT), || if CURRENT == ENTRY { Lookup::Missing } else { lookup(ENTRY) });
+    #[cfg(target_os = "macos")]
+    let older = || { for entry in OLDER { match keyring_lookup(entry) { Lookup::Missing => continue, other => return other } } Lookup::Missing };
+    #[cfg(windows)]
+    let older = || Lookup::Missing;
+    let (tokens, migrate, notice) = restore_choice(lookup(CURRENT), older);
     if migrate { if let Some(t) = &tokens { let _ = save_tokens(t); } }
     (tokens, notice)
 }
-#[cfg(any(windows, target_os = "macos"))]
+#[cfg(target_os = "macos")]
+fn save_tokens(t: &Tokens) -> Result<(), CallError> {
+    pulse_desktop_core::mac_keychain::write(SERVICE, CURRENT, &serde_json::to_string(t).unwrap_or_default())
+        .map_err(|_| CallError::status(0, "This computer’s credential store refused to keep the Pulse sign-in"))
+}
+#[cfg(windows)]
 fn save_tokens(t: &Tokens) -> Result<(), CallError> {
     keyring::Entry::new(SERVICE, CURRENT)
         .and_then(|e| e.set_password(&serde_json::to_string(t).unwrap_or_default()))
@@ -82,13 +105,33 @@ fn save_tokens(t: &Tokens) -> Result<(), CallError> {
 }
 #[cfg(any(windows, target_os = "macos"))]
 fn forget_tokens() {
-    for entry in [CURRENT, ENTRY] { if let Ok(e) = keyring::Entry::new(SERVICE, entry) { let _ = e.delete_credential(); } }
+    #[cfg(target_os = "macos")]
+    {
+        pulse_desktop_core::mac_keychain::delete(SERVICE, CURRENT);
+        // Older builds' items may sit in another Keychain partition: remove them only if that needs no prompt.
+        let quiet = security_framework::os::macos::keychain::SecKeychain::disable_user_interaction().ok();
+        for entry in OLDER { if let Ok(e) = keyring::Entry::new(SERVICE, entry) { let _ = e.delete_credential(); } }
+        drop(quiet);
+    }
+    #[cfg(windows)]
+    { if let Ok(e) = keyring::Entry::new(SERVICE, CURRENT) { let _ = e.delete_credential(); } }
 }
+
 /// Hosted proof that an updated build reads the saved sign-in without a Keychain prompt (see acceptance.rs).
 pub fn keychain_acceptance(op: &str) -> Value {
     let synthetic = Tokens { base: "https://acceptance.invalid/api/native/v0".into(), access_token: "a".repeat(43), refresh_token: "r".repeat(43), device_id: "00000000-0000-4000-8000-000000000000".into(), person_name: "Acceptance runner".into() };
     match op {
         "write" => json!({"stored": save_tokens(&synthetic).is_ok()}),
+        // An item in the app's own Keychain partition, as builds before 1.0.1 stored it.
+        #[cfg(target_os = "macos")]
+        "write-legacy" => json!({"stored": keyring::Entry::new(SERVICE, "companion-device-v2").and_then(|e| e.set_password(&serde_json::to_string(&synthetic).unwrap_or_default())).is_ok()}),
+        #[cfg(target_os = "macos")]
+        "read-legacy" => {
+            let quiet = security_framework::os::macos::keychain::SecKeychain::disable_user_interaction().ok();
+            let found = match keyring_lookup("companion-device-v2") { Lookup::Found(_) => "found", Lookup::Missing => "missing", Lookup::Unreadable => "unreadable" };
+            drop(quiet);
+            json!({"read": found, "promptsDisabled": true})
+        }
         "read" => {
             #[cfg(target_os = "macos")]
             let quiet = security_framework::os::macos::keychain::SecKeychain::disable_user_interaction().ok();

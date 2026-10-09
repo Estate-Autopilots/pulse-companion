@@ -154,11 +154,11 @@ export function mountCommunications(root,{call,onOpen,onSwitch,onResize=()=>{},o
  bar.append(me);
  const barTools = element('div', undefined, 'pc-bar-tools');
  if (tools?.length) for (const t of tools) barTools.append(iconButton(t.icon, t.label, () => t.onClick?.(), 'pc-icon-btn'));
- else if (onSwitch) barTools.append(button('Switch account', onSwitch, 'pc-link pc-switch'));
+ else if (onSwitch) barTools.append(button('Not you? Switch account', onSwitch, 'pc-link pc-switch'));
  bar.append(barTools);
  // Segmented control with unread pills.
  const tabs = element('div', undefined, 'pc-segment');
- tabs.setAttribute('role', 'tablist'); tabs.setAttribute('aria-label', 'Companion sections');
+ tabs.setAttribute('role', 'group'); tabs.setAttribute('aria-label', 'Companion sections');
  const banner = element('div', undefined, 'pc-banner'); banner.hidden = true; banner.setAttribute('role', 'alert');
  const today = element('div', undefined, 'pc-pane pc-today'), content = element('div', undefined, 'pc-pane pc-comms-content');
  today.id = 'pc-pane-today'; content.id = 'pc-pane-list';
@@ -175,7 +175,7 @@ export function mountCommunications(root,{call,onOpen,onSwitch,onResize=()=>{},o
  const tabButtons = {};
  for (const [key, title] of [['today', 'Today'], ['inbox', 'Inbox'], ['chats', 'Chats']]) {
   const b = element('button', undefined, 'pc-tab');
-  b.type = 'button'; b.setAttribute('role', 'tab'); b.id = `pc-tab-${key}`; b.dataset.tab = key;
+  b.type = 'button'; b.id = `pc-tab-${key}`; b.dataset.tab = key;
   b.setAttribute('aria-controls', key === 'today' ? today.id : content.id);
   b.append(element('span', title, 'pc-tab-label'));
   b.addEventListener('click', () => select(key));
@@ -192,15 +192,14 @@ export function mountCommunications(root,{call,onOpen,onSwitch,onResize=()=>{},o
   if (root.firstElementChild !== shell) root.replaceChildren(shell);
   shell.dataset.tab = tab;
   today.hidden = tab !== 'today'; content.hidden = tab === 'today';
-  for (const [key, b] of Object.entries(tabButtons)) { const on = key === tab; b.setAttribute('aria-selected', String(on)); b.tabIndex = on ? 0 : -1; b.setAttribute('aria-current', String(on)); }
-  content.setAttribute('aria-labelledby', `pc-tab-${tab === 'today' ? 'inbox' : tab}`);
-  today.setAttribute('aria-labelledby', 'pc-tab-today');
+  for (const [key, b] of Object.entries(tabButtons)) { const on = key === tab; b.setAttribute('aria-pressed', String(on)); b.setAttribute('aria-current', String(on)); }
   onResize();
  }
  /** A short, transient line for things like "Sent" or "Not a member"; never a permanent footer. */
- function status(text) {
+ /** One line for things like "Sent" or a browser that cannot ping yet; empty by default, never a permanent hint. */
+ function status(text, { transient = false } = {}) {
   flash = text || null; notice.textContent = flash ?? ''; notice.hidden = !flash;
-  clearTimeout(flashTimer); if (flash) flashTimer = setTimeout(() => { flash = null; notice.textContent = ''; notice.hidden = true; onResize(); }, 6000);
+  clearTimeout(flashTimer); if (flash && transient) flashTimer = setTimeout(() => { flash = null; notice.textContent = ''; notice.hidden = true; onResize(); }, 6000);
   onResize();
  }
  /** The single banner, shown only while a ping cannot arrive. */
@@ -299,7 +298,8 @@ export function mountCommunications(root,{call,onOpen,onSwitch,onResize=()=>{},o
   if (ch.unread) bottom.append(pill(ch.unread, 'unread'));
   body.append(top, bottom);
   row.append(avatar(ch.name, { group }), body);
-  row.setAttribute('aria-label', `${ch.name}${ch.unread ? `, ${ch.unread} unread` : ''}${ch.preview ? `. ${preview}` : ''}`);
+  row.setAttribute('aria-label', `${ch.name}${ch.unread ? ` · ${ch.unread} unread` : ''}`);
+  const described = `pc-preview-${ch.id}`; bottom.firstElementChild.id = described; row.setAttribute('aria-describedby', described);
   row.addEventListener('click', () => { selected = ch.id; selectedHref = null; drawConversation(); void loadMessages(); });
   const pin = iconButton('pin', isPinned ? `Unpin ${ch.name}` : `Pin ${ch.name}`, () => { const list = pins(); savePins(isPinned ? list.filter((x) => x !== ch.id) : [...list, ch.id].slice(-12)); draw(); }, `pc-icon-btn pc-pin${isPinned ? ' pc-pinned' : ''}`);
   li.append(row, pin);
@@ -350,7 +350,7 @@ export function mountCommunications(root,{call,onOpen,onSwitch,onResize=()=>{},o
   );
   messagesHost = element('div', undefined, 'pc-messages'); messagesHost.setAttribute('role', 'log'); messagesHost.setAttribute('aria-label', 'Recent messages'); messagesHost.tabIndex = 0;
   const form = element('form', undefined, 'pc-composer');
-  reply = element('textarea'); reply.maxLength = 12000; reply.rows = 1; reply.placeholder = 'Message'; reply.setAttribute('aria-label', `Reply to ${ch?.name ?? 'this conversation'}`);
+  reply = element('textarea'); reply.maxLength = 12000; reply.rows = 1; reply.placeholder = `Message ${ch?.name ?? ''}`.trim(); reply.setAttribute('aria-label', 'Quick reply');
   reply.addEventListener('input', grow);
   reply.addEventListener('keydown', (e) => { if (e.key === 'Enter' && !e.shiftKey && !e.isComposing) { e.preventDefault(); form.requestSubmit(); } });
   const send = element('button', undefined, 'pc-send'); send.type = 'submit'; send.setAttribute('aria-label', 'Send'); send.insertAdjacentHTML('beforeend', glyph('send', 18));

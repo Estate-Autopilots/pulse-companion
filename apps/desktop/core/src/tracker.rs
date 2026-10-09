@@ -130,16 +130,20 @@ fn key() -> Result<[u8; 32], String> {
         }
     };
     let decode = |s: &str| -> Option<[u8; 32]> { STANDARD.decode(s).ok()?.try_into().ok() };
-    let (found, migrate, _) = restore_choice(lookup("tracker-key-v2"), || lookup("tracker-key"));
+    // macOS: the current key is kept through Apple's security tool (readable by every Pulse build, see mac_keychain);
+    // Windows: Credential Manager, which already survives updates.
+    #[cfg(target_os = "macos")]
+    let (current, store) = (crate::mac_keychain::read("com.pulse.work", "tracker-key-v3"), |k: &str| crate::mac_keychain::write("com.pulse.work", "tracker-key-v3", k));
+    #[cfg(windows)]
+    let (current, store) = (lookup("tracker-key-v2"), |k: &str| keyring::Entry::new("com.pulse.work", "tracker-key-v2").and_then(|e| e.set_password(k)).map_err(|_| "Cannot save tracker key".to_string()));
+    let (found, migrate, _) = restore_choice(current, || match lookup("tracker-key-v2") { Lookup::Missing => lookup("tracker-key"), other => other });
     if let Some(k) = found.as_deref().and_then(decode) {
-        if migrate { let _ = keyring::Entry::new("com.pulse.work", "tracker-key-v2").and_then(|e| e.set_password(&STANDARD.encode(k))); }
+        if migrate { let _ = store(&STANDARD.encode(k)); }
         return Ok(k);
     }
     let mut k = [0u8; 32];
     OsRng.fill_bytes(&mut k);
-    keyring::Entry::new("com.pulse.work", "tracker-key-v2")
-        .and_then(|e| e.set_password(&STANDARD.encode(k)))
-        .map_err(|_| "Cannot save tracker key".to_string())?;
+    store(&STANDARD.encode(k)).map_err(|_| "Cannot save tracker key".to_string())?;
     Ok(k)
 }
 #[cfg(not(any(windows, target_os = "macos")))]

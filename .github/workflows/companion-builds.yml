@@ -204,25 +204,24 @@ jobs:
       # identity, different code), read it back with Keychain prompts disabled: no prompt, still signed in.
       - name: Prove the saved sign-in survives an update without a Keychain prompt
         if: matrix.platform == 'macos' && env.APPLE_SIGNING_IDENTITY != ''
-        continue-on-error: true
         shell: bash
         run: |
           set -euo pipefail
-          proof="$PWD/screens/keychain"; mkdir -p "$proof/n" "$proof/n1" "$proof/adhoc"
-          for v in n n1 adhoc; do mkdir -p "$RUNNER_TEMP/$v"; ditto "$PULSE_MAC_APP" "$RUNNER_TEMP/$v/Pulse.app"; done
+          proof="$PWD/screens/keychain"; mkdir -p "$proof/n" "$proof/n1"
+          for v in n n1; do mkdir -p "$RUNNER_TEMP/$v"; ditto "$PULSE_MAC_APP" "$RUNNER_TEMP/$v/Pulse.app"; done
           /usr/libexec/PlistBuddy -c "Set :CFBundleShortVersionString 99.0.1" -c "Set :CFBundleVersion 99.0.1" "$RUNNER_TEMP/n1/Pulse.app/Contents/Info.plist"
           codesign --force --options runtime --sign "$APPLE_SIGNING_IDENTITY" "$RUNNER_TEMP/n1/Pulse.app"
-          codesign --force --sign - "$RUNNER_TEMP/adhoc/Pulse.app"
-          for v in n n1 adhoc; do codesign -dvvv "$RUNNER_TEMP/$v/Pulse.app" > "$proof/$v/signature.txt" 2>&1; codesign -d -r- "$RUNNER_TEMP/$v/Pulse.app" >> "$proof/$v/signature.txt" 2>&1; done
+          for v in n n1; do codesign -dvvv "$RUNNER_TEMP/$v/Pulse.app" > "$proof/$v/signature.txt" 2>&1; codesign -d -r- "$RUNNER_TEMP/$v/Pulse.app" >> "$proof/$v/signature.txt" 2>&1; done
           if [ "$(grep CDHash= "$proof/n/signature.txt")" = "$(grep CDHash= "$proof/n1/signature.txt")" ]; then echo "N+1 must be different code"; exit 1; fi
           grep -qiE 'certificate (leaf|root) = H"de66190258537c00e1fe958a2f2380074d9fc58a"' "$proof/n/signature.txt"
           grep -qiE 'certificate (leaf|root) = H"de66190258537c00e1fe958a2f2380074d9fc58a"' "$proof/n1/signature.txt"
           run() { PULSE_ACCEPTANCE_DIR="$proof/$1" perl -e 'alarm 60; exec @ARGV' "$RUNNER_TEMP/$1/Pulse.app/Contents/MacOS/pulse-desktop" --keychain-acceptance "$2"; }
           run n write
+          run n write-legacy
           run n1 read
-          run adhoc read
+          run n1 read-legacy
           run n clear
-          node -e 'const r=n=>JSON.parse(require("fs").readFileSync(`${process.argv[1]}/${n}/keychain-read.json`)).result.read;const a=r("n1"),b=r("adhoc");console.log(JSON.stringify({updatedBuild:a,differentIdentity:b}));if(a!=="found")throw Error("N+1 could not read the sign-in silently: "+a);if(b!=="unreadable")throw Error("another identity was not refused quietly: "+b);' "$proof"
+          node -e 'const r=(n,f)=>JSON.parse(require("fs").readFileSync(`${process.argv[1]}/${n}/keychain-${f}.json`)).result.read;const a=r("n1","read"),b=r("n1","read-legacy");console.log(JSON.stringify({updatedBuild:a,appPartitionItem:b}));if(a!=="found")throw Error("N+1 could not read the sign-in silently: "+a);if(!["found","unreadable","missing"].includes(b))throw Error("unexpected legacy result "+b);' "$proof"
       - uses: actions/upload-artifact@v7
         with:
           name: companion-desktop-${{ matrix.platform }}-${{ github.sha }}

@@ -1,6 +1,6 @@
-# Pulse Companion — client apps for Pulse by Estate Autopilots
+# Pulse apps — client apps for Pulse by Estate Autopilots
 
-Desktop tray/menu-bar panel, iPhone and Android apps, and Chrome extension for https://pulse.estateautopilots.com.
+The full Pulse in its own desktop window with a tray/menu-bar quick panel, iPhone and Android apps, and a Chrome extension for https://pulse.estateautopilots.com.
 Approve an app’s pairing code in your Pulse browser. Attendance follows My desk; device access is revocable in Settings → Devices.
 
 Client source only, with fresh history. No Pulse server, employee records, research, credentials or signing keys.
@@ -9,7 +9,7 @@ Desktop update bundles have Tauri signatures, and Android APKs use a persistent 
 
 Install an updater-enabled version once from the public releases: choose Windows Setup (.exe) for your Windows account, or drag the Mac app from its DMG into a writable Applications folder. Sign in with your Pulse account. Pip then offers “A new Pulse is ready” with Install and restart / Later. Updates wait for attendance actions and queued work; Later postpones the offer for four hours. Recovery retains the previous app after two failed starts. Managed, machine-wide MSI rollback has not been verified.
 
-After a Mac update, macOS may ask to access your saved Pulse information in Keychain. Enter your Mac login password in that system prompt and choose Always Allow. Pulse stays open while protected credentials and work settings are restored. Android explains the first install-unknown-apps permission and opens the system installer for confirmation. An older APK signed with a different debug key cannot be updated in place; preserve its data. Chrome offers an extension download and Reload instructions until a Web Store listing is available.
+From 1.0 every Mac build is signed with one stable Estate Autopilots identity, so updates keep you signed in without Keychain prompts; coming from an earlier test version, Pulse asks you to sign in once more. Saved sign-ins are never read with a Keychain prompt.
 
 Every accepted Companion change is exported through a reviewed client-only allowlist to this repository. A main commit starts hosted builds and required acceptance, then publishes a versioned public release with installers, signed updater bundles, latest.json and SHA256SUMS.txt. The test channel pointer advances only after publication succeeds. Get the apps and installed clients read that same manifest.
 

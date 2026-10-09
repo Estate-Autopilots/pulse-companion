@@ -110,9 +110,9 @@
 .pc-tab { display: inline-flex; align-items: center; justify-content: center; gap: 6px; min-height: 30px; padding: 0 8px; border: 0; border-radius: 8px; background: transparent; color: var(--pc-muted);
   font: inherit; font-size: 13px; font-weight: 580; cursor: pointer; transition: background .2s, color .2s, box-shadow .2s; }
 .pc-tab:hover { color: var(--pc-text); }
-.pc-tab[aria-selected="true"] { background: var(--pc-surface); color: var(--pc-text); box-shadow: 0 1px 2px rgb(24 20 60 / 10%), 0 0 0 .5px rgb(24 20 60 / 6%); }
-@media (prefers-color-scheme: dark) { :root:not([data-theme="light"]) .pc-tab[aria-selected="true"] { background: #34344a; box-shadow: 0 1px 2px rgb(0 0 0 / 40%); } }
-:root[data-theme="dark"] .pc-tab[aria-selected="true"] { background: #34344a; box-shadow: 0 1px 2px rgb(0 0 0 / 40%); }
+.pc-tab[aria-pressed="true"] { background: var(--pc-surface); color: var(--pc-text); box-shadow: 0 1px 2px rgb(24 20 60 / 10%), 0 0 0 .5px rgb(24 20 60 / 6%); }
+@media (prefers-color-scheme: dark) { :root:not([data-theme="light"]) .pc-tab[aria-pressed="true"] { background: #34344a; box-shadow: 0 1px 2px rgb(0 0 0 / 40%); } }
+:root[data-theme="dark"] .pc-tab[aria-pressed="true"] { background: #34344a; box-shadow: 0 1px 2px rgb(0 0 0 / 40%); }
 .pc-pill { display: inline-grid; place-items: center; min-width: 18px; height: 18px; padding: 0 6px; border-radius: 999px; background: var(--pc-danger); color: #fff;
   font-size: 11px; line-height: 1; font-weight: 700; font-variant-numeric: tabular-nums; }
 .pc-tab .pc-pill, .pc-row .pc-pill { background: var(--pc-action); color: var(--pc-action-text); }
