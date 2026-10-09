@@ -7,6 +7,9 @@ importers:
   apps/chrome-extension: {}
   apps/desktop:
     devDependencies:
+      '@playwright/test':
+        specifier: 1.55.0
+        version: 1.55.0
       '@tauri-apps/cli':
         specifier: ^2.12.1
         version: 2.12.1
@@ -140,6 +143,12 @@ packages:
       integrity: sha512-wgm9Ehl2jpeqP3zw/7mo3kRHFp5MEDhqAdwy1fTGkHAwnkGOVsgpvQhL8B5n1qlb01jV3n/bI0ZfZp5lWA1k4w==
     engines:
       node: '>=18.0.0'
+  '@playwright/test@1.55.0':
+    resolution:
+      integrity: sha512-04IXzPwHrW69XusN/SIdDdKZBzMfOT9UNT/YiJit/xpy2VuAoB8NHc8Aplb96zsWDddLnbkPL3TsmrS04ZU2xQ==
+    engines:
+      node: '>=18'
+    hasBin: true
   '@tauri-apps/cli-darwin-arm64@2.12.1':
     resolution:
       integrity: sha512-8bMnbpJ2jKO/ufrOPL65EMHC3ptw7fzeraoQkwibyfGLqIl+UCWsC0152kmNbW6r9NvVQduXqAZF5mH1QgTWhw==
@@ -387,6 +396,13 @@ packages:
       integrity: sha512-hcg3ZmepS30/7BSFqRvoo3DOMQu7IjqxO5nCDt+zM9XWjb33Wg7ziNT+Qvqbuc3+gWpzO02JubVyk2G4Zvo1OQ==
     engines:
       node: '>=10'
+  fsevents@2.3.2:
+    resolution:
+      integrity: sha512-xiqMQR4xAeHTuB9uWm+fFRcIOgKBMiOBP+eXiyT7jsgVCq1bkVygt00oASowB7EdtpOHaaPgKt812P9ab+DDKA==
+    engines:
+      node: ^8.16.0 || ^10.6.0 || >=11.0.0
+    os:
+    - darwin
   glob@13.0.6:
     resolution:
       integrity: sha512-Wjlyrolmm8uDpm/ogGyXZXb1Z+Ca2B8NbJwqBVg0axK9GbBeoS7yGV6vjXnYdGm6X53iehEuxxbyiKp8QmN4Vw==
@@ -485,6 +501,18 @@ packages:
   pend@1.2.0:
     resolution:
       integrity: sha512-F3asv42UuXchdzt+xXqfW1OGlVBe+mxa2mqI0pg5yAHZPvFmY3Y6drSf/GQ1A86WgWEN9Kzh/WrgKa6iGcHXLg==
+  playwright-core@1.55.0:
+    resolution:
+      integrity: sha512-GvZs4vU3U5ro2nZpeiwyb0zuFaqb9sUiAJuyrWpcGouD8y9/HLgGbNRjIph7zU9D3hnPaisMl9zG9CgFi/biIg==
+    engines:
+      node: '>=18'
+    hasBin: true
+  playwright@1.55.0:
+    resolution:
+      integrity: sha512-sdCWStblvV1YU909Xqx0DhOjPZE4/5lJsIS84IfN9dAZfcl/CIZ5O8l3o0j7hPMjDvqoTF8ZUcc+i/GL5erstA==
+    engines:
+      node: '>=18'
+    hasBin: true
   plist@3.1.1:
     resolution:
       integrity: sha512-ZIfcLJC+7E7FBFnDxm9MPmt7D+DidyQ26lewieO75AdhA2ayMtsJSES0iWzqJQbcVRSrTufQoy0DR94xHue0oA==
@@ -766,6 +794,9 @@ snapshots:
   '@isaacs/fs-minipass@4.0.1':
     dependencies:
       minipass: 7.1.3
+  '@playwright/test@1.55.0':
+    dependencies:
+      playwright: 1.55.0
   '@tauri-apps/cli-darwin-arm64@2.12.1':
     optional: true
   '@tauri-apps/cli-darwin-x64@2.12.1':
@@ -865,6 +896,8 @@ snapshots:
       graceful-fs: 4.2.11
       jsonfile: 6.2.1
       universalify: 2.0.1
+  fsevents@2.3.2:
+    optional: true
   glob@13.0.6:
     dependencies:
       minimatch: 10.2.6
@@ -922,6 +955,12 @@ snapshots:
       lru-cache: 11.5.3
       minipass: 7.1.3
   pend@1.2.0: {}
+  playwright-core@1.55.0: {}
+  playwright@1.55.0:
+    dependencies:
+      playwright-core: 1.55.0
+    optionalDependencies:
+      fsevents: 2.3.2
   plist@3.1.1:
     dependencies:
       '@xmldom/xmldom': 0.9.12

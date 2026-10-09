@@ -44,4 +44,12 @@ await writeFile('release-notes.md', [
 ].join('\n') + '\n');
 gh('release', 'create', tag, '--repo', repo, '--target', commit, '--prerelease', '--title', `Pulse for Android ${version} (phone app, pre-release)`, '--notes-file', 'release-notes.md',
   ...(await readdir('release')).map(f => join('release', f)));
-console.log(JSON.stringify({ tag, url: `https://github.com/${repo}/releases/tag/${tag}`, versionCode, apkSha256: apk.sha256 }));
+// Get the apps offers the newest phone app from this download pointer. It is not an update channel: installed apps
+// read companion-test, which only promote-android.mjs changes.
+const pointer = 'companion-phone';
+try { gh('release', 'view', pointer, '-R', repo); } catch {
+  gh('release', 'create', pointer, '-R', repo, '--target', commit, '--prerelease', '--title', 'Pulse phone app download',
+    '--notes', 'Points Get the apps at the newest phone app pre-release. Installed apps update only from the companion-test channel.');
+}
+gh('release', 'upload', pointer, 'release/android-channel-entry.json', '-R', repo, '--clobber');
+console.log(JSON.stringify({ tag, url: `https://github.com/${repo}/releases/tag/${tag}`, versionCode, apkSha256: apk.sha256, downloadPointer: pointer }));

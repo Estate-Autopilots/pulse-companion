@@ -65,7 +65,7 @@ test('Pulse links open in the app; install pages, the API and the client portal 
   const prefixes = [...manifest.matchAll(/android:pathPrefix="([^"]+)"/g)].map(m => m[1]);
   for (const p of ['/dashboard', '/me', '/tasks', '/chats', '/inbox', '/people', '/hr', '/settings']) assert.ok(prefixes.includes(p), p);
   for (const p of prefixes) assert.doesNotMatch(p, /^\/(apps|api|portal|_next|\.well-known)/);
-  const links = resolve(repo, 'apps/web/public/.well-known/assetlinks.json');
+  const links = resolve(repo, 'apps/web/app/lib/assetlinks.json');
   if (existsSync(links)) {
     const target = JSON.parse(readFileSync(links, 'utf8'))[0].target;
     assert.equal(target.package_name, 'com.pulse.work.mobile');

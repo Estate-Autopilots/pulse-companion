@@ -116,7 +116,9 @@ jobs:
           sudo udevadm control --reload-rules && sudo udevadm trigger --name-match=kvm
       - uses: reactivecircus/android-emulator-runner@v2
         env:
-          PULSE_SIGNIN_TEXT: ${{ inputs.signin_text || 'Username' }}
+          # Publishing builds require the sign-in form itself. Validation runs before the matching web release is
+          # live also accept production's earlier signed-out page, so the remaining checks still run.
+          PULSE_SIGNIN_TEXT: ${{ inputs.signin_text || (github.ref == 'refs/heads/main' && 'Username' || 'Username|Sign in to Pulse') }}
         with:
           api-level: 34
           arch: x86_64

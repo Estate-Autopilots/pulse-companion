@@ -64,6 +64,7 @@ export function wifiMatch(wifi, presence) {
 export function decidePresence({ signal, payload, prefs, at, recent = [] }) {
   const none = (reason) => ({ kind: 'none', reason });
   if (!signal?.place || !payload) return none('no-place');
+  if (payload.attendanceEnabled !== true) return none('attendance-off');
   if (!prefs?.presence) return none('presence-off');
   const { trigger, place } = signal;
   const state = payload.state;

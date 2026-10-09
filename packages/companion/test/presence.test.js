@@ -73,6 +73,13 @@ test('automatic check-in needs HR policy AND the person, a strong office signal 
   assert.equal(decidePresence({ signal: enter(), payload: payload(), prefs: both, at: IST('08:30') }).kind, 'suggest-check-in', 'too early for auto');
 });
 
+test('attendance gate prevents location check-in suggestions when false or missing', () => {
+  for (const attendanceEnabled of [false, undefined]) {
+    const off = { ...payload(), attendanceEnabled };
+    assert.equal(decidePresence({ signal: enter(), payload: off, prefs: { ...prefs, presence: true, autoCheckIn: true }, at: IST('09:50') }).reason, 'attendance-off');
+  }
+});
+
 test('no suggestion when presence is off, already in, on leave, at night, or repeated within 30 minutes', () => {
   assert.equal(decidePresence({ signal: enter(), payload: payload(), prefs: { presence: false }, at: IST('09:50') }).kind, 'none');
   const inP = { ...applyLocal(payload(), 'check-in', IST('09:51')), presence };

@@ -69,6 +69,15 @@ test('reminder at shift start only when not checked in, once per day, switchable
   assert.deepEqual(dueReminders(applyLocal(p, 'check-in', IST('09:55')), {}, IST('09:57')), []);
 });
 
+test('attendance reminders and startup popup stay off when the flag is false or missing', () => {
+  for (const attendanceEnabled of [false, undefined]) {
+    const p = { ...demoPayload('out', IST('09:56')), attendanceEnabled };
+    assert.deepEqual(dueReminders(p, {}, IST('09:56')), []);
+    assert.deepEqual(reminderPlan(p, {}, IST('09:00')), []);
+    assert.equal(shouldPopUp(p, {}, IST('09:55')), null);
+  }
+});
+
 test('back-from-break reminder after the chosen minutes, once per break', () => {
   const p = applyLocal(applyLocal(demoPayload('out', IST('09:50')), 'check-in', IST('09:55')), 'break-start', IST('13:00'));
   assert.deepEqual(dueReminders(p, {}, IST('13:20')), []);

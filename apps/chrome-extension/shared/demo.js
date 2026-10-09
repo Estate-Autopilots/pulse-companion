@@ -17,7 +17,7 @@ export function demoPayload(state = 'out', at = Date.now(), options = {}) {
   const tomorrow = istDay(at + 86400000);
   const inAt = Math.min(at - 60000, start + (options.late ?? -4) * 60000);
   const base = {
-    demo: true, person: { id: 'demo', name: 'Pip Demo', firstName: 'Pip' }, now: iso(at), today, clock: '', timezone: 'Asia/Kolkata', utcOffsetMinutes: IST,
+    demo: true, attendanceEnabled: true, person: { id: 'demo', name: 'Pip Demo', firstName: 'Pip' }, now: iso(at), today, clock: '', timezone: 'Asia/Kolkata', utcOffsetMinutes: IST,
     shift: { start: '10:00', end: '19:00', graceMinutes: 15, onTimeBy: '10:15', workingDay: !['off', 'holiday'].includes(state), mode: 'office' },
     shiftStartsAt: iso(start), shiftEndsAt: iso(end), state, holiday: state === 'holiday' ? 'Diwali' : null, entry: null,
     nextShift: { date: at < start ? today : tomorrow, start: '10:00', startsAt: iso(at < start ? start : istInstant(tomorrow, '10:00')) },

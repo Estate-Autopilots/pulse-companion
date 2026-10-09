@@ -1,6 +1,6 @@
-// After the owner's go-ahead only: offer an approved phone-app pre-release on the test channel. The installed Expo
-// 1.0.0 app then updates to it (same package and key, higher versionCode). Desktop entries and the channel version
-// stay exactly as they are, so no desktop app sees a new update because of this.
+// After the owner's go-ahead only: offer an approved phone-app pre-release on the test channel (latest.json, the
+// Android channel since desktops moved to latest-desktop.json). The installed Expo 1.0.0 app then updates to it: same
+// package and key, higher versionCode. latest-desktop.json is never touched, so no desktop sees an update.
 import { execFileSync } from 'node:child_process';
 import { createHash } from 'node:crypto';
 import { mkdtemp, readFile, writeFile } from 'node:fs/promises';
@@ -21,8 +21,18 @@ if (bytes.length !== entry.size || createHash('sha256').update(bytes).digest('he
 if (!entry.url.endsWith(`/releases/download/${tag}/${entry.name}`)) throw Error('Entry points outside its own release');
 const manifest = JSON.parse(gh('release', 'download', `companion-${channel}`, '-R', repo, '-p', 'latest.json', '-O', '-'));
 parseManifest(manifest, channel);
-// Installed Expo 1.0.0 apps compare the channel's version with their own before reading the Android entry.
-if (!newer(manifest.version, '1.0.0')) throw Error(`The test channel is at ${manifest.version}; Expo 1.0.0 phones only look for an update once it is above 1.0.0. Publish the next desktop release first.`);
+// Desktop apps read latest-desktop.json (R20b), so latest.json is the phone channel and may take the phone's version.
+// Without that split, raising the version would offer desktops their own build again: refuse instead.
+let desktopSplit = true;
+try { gh('release', 'download', `companion-${channel}`, '-R', repo, '-p', 'latest-desktop.json', '-O', '-'); } catch { desktopSplit = false; }
+const phoneVersion = entry.name.match(/^Pulse-(\d+\.\d+\.\d+)-android\.apk$/)[1];
+if (desktopSplit) {
+  // Installed Expo 1.0.0 apps compare this version with their own before they read the Android entry.
+  if (newer(phoneVersion, manifest.version)) manifest.version = phoneVersion;
+} else if (!newer(manifest.version, '1.0.0')) {
+  throw Error(`The test channel is at ${manifest.version} and desktops still read it; publish a desktop-only release (latest-desktop.json) first.`);
+}
+manifest.notes = 'The new Pulse phone app: the full Pulse, with notifications, Pulse links that open in the app, and check-in on Today. Sign in once with your Pulse username and password.';
 manifest.files = [...manifest.files.filter(f => f.platform !== 'android'), entry];
 parseManifest(manifest, channel);
 await writeFile(join(dir, 'latest.json'), JSON.stringify(manifest, null, 2) + '\n');

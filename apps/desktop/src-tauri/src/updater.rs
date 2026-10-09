@@ -13,7 +13,7 @@ pub struct Gate(pub Mutex<(u32, bool)>);
 fn err(_: impl std::fmt::Display) -> String { "Pulse could not prepare this update. Please try again.".into() }
 fn endpoint(channel: &str) -> Result<url::Url, String> {
     if !matches!(channel, "test" | "stable") { return Err("Unknown update channel".into()); }
-    format!("https://pulse.estateautopilots.com/api/app-updates/{channel}/latest.json").parse().map_err(err)
+    format!("https://github.com/Estate-Autopilots/pulse-companion/releases/download/companion-{channel}/latest-desktop.json").parse().map_err(err)
 }
 fn device(app: &AppHandle) -> Option<String> { app.state::<Companion>().session()["deviceId"].as_str().map(str::to_owned) }
 fn journal_path(app: &AppHandle) -> Result<PathBuf, String> { Ok(app.path().app_local_data_dir().map_err(err)?.join("update-journal.json")) }
@@ -32,7 +32,7 @@ fn valid_manifest(update: &Update, channel: &str) -> bool {
 pub async fn update_check(app: AppHandle, channel: String) -> Result<Value, String> {
     let updates = app.state::<Updates>(); let mut slot = updates.0.lock().await;
     *slot = None;
-    let updater = app.updater_builder().endpoints(vec![endpoint(&channel)?]).map_err(err)?.timeout(Duration::from_secs(30)).restart_after_install(false).build().map_err(err)?;
+    let updater = app.updater_builder().endpoints(vec![endpoint(&channel)?, format!("https://pulse.estateautopilots.com/api/app-updates/{channel}/latest.json").parse().map_err(err)?]).map_err(err)?.timeout(Duration::from_secs(30)).restart_after_install(false).build().map_err(err)?;
     let Some(mut update) = updater.check().await.map_err(err)? else { return Ok(Value::Null) };
     if !valid_manifest(&update, &channel) { return Err("Pulse rejected an invalid update manifest".into()); }
     if blocked(&app, &update.version) { return Err("That update did not start correctly. Waiting for a newer Pulse.".into()); }

@@ -1,8 +1,9 @@
 name: Pulse Companion builds
 # Internal test builds of the Pulse apps on GitHub's runners (the VPS stays cool): Windows MSI/EXE and macOS DMG
 # (Tauri) and the Chrome extension ZIP, plus screenshots of each app running on a real runner. Unsigned for
-# Windows/macOS until the owner provides certificates. The phone app (Capacitor shell) has its own workflow,
-# mobile.yml; a desktop release carries the channel's existing phone entries forward unchanged.
+# Windows/macOS until the owner provides certificates. Nothing is published from here: desktop releases go through
+# desktop-release.yml, the phone app (Capacitor shell) through mobile.yml, whose promote step alone moves the
+# phone's update channel. Pushes run this build only when asked (workflow_dispatch).
 on:
   push:
     branches: [main]
@@ -35,7 +36,7 @@ concurrency:
   cancel-in-progress: false
 jobs:
   prepare:
-    if: ${{ !inputs.macos_ping_build }}
+    if: ${{ github.event_name == 'workflow_dispatch' && !inputs.macos_ping_build }}
     runs-on: ubuntu-latest
     outputs:
       version: ${{ steps.version.outputs.version }}
@@ -304,25 +305,6 @@ jobs:
             pulse-chrome-web-store.zip
           if-no-files-found: error
           retention-days: 30
-
-  publish:
-    needs: [prepare, desktop, windows-tray, chrome]
-    if: ${{ github.ref == 'refs/heads/main' && !inputs.validation_only }}
-    runs-on: ubuntu-latest
-    permissions: { contents: write, actions: read }
-    steps:
-      - uses: actions/checkout@v7
-      - uses: actions/setup-node@v7
-        with: { node-version-file: .nvmrc }
-      - uses: actions/download-artifact@v7
-        with: { path: artifacts, pattern: 'companion-*-${{ github.sha }}' }
-      - name: Publish signed bundles then advance the channel manifest
-        env:
-          GH_TOKEN: ${{ github.token }}
-          RELEASE_VERSION: ${{ needs.prepare.outputs.version }}
-          RELEASE_NOTES: ${{ needs.prepare.outputs.notes }}
-          RELEASE_CHANNEL: ${{ inputs.channel || 'test' }}
-        run: node apps/desktop/scripts/publish-release.mjs
 
   windows-tray:
     if: ${{ !inputs.validation_only }}
