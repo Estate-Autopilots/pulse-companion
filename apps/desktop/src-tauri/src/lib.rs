@@ -1,5 +1,8 @@
+mod acceptance;
+mod appwin;
 mod companion;
 mod pings;
+mod presence;
 mod updater;
 use updater::{update_check, update_prepare, update_install, update_healthy, Updates, Gate};
 
@@ -8,7 +11,7 @@ use pulse_desktop_core::{
     tracker::{Settings, Tracker},
     AgentCore, AgentStatus,
 };
-use serde_json::Value;
+use serde_json::{json, Value};
 use std::{
     sync::{Mutex, atomic::{AtomicBool, Ordering}},
     thread,
@@ -16,9 +19,9 @@ use std::{
 };
 use tauri::{
     image::Image,
-    menu::{Menu, MenuItem, PredefinedMenuItem},
+    menu::{Menu, MenuItem, PredefinedMenuItem, Submenu},
     tray::{MouseButton, MouseButtonState, TrayIconBuilder, TrayIconEvent},
-    AppHandle, Manager, PhysicalPosition, PhysicalSize, State, WebviewUrl, WebviewWindow, WebviewWindowBuilder, WindowEvent,
+    AppHandle, Emitter, Manager, PhysicalPosition, PhysicalSize, State, WebviewUrl, WebviewWindow, WebviewWindowBuilder, WindowEvent,
 };
 use tauri_plugin_autostart::{MacosLauncher, ManagerExt};
 use tauri_plugin_global_shortcut::{Code, GlobalShortcutExt, Modifiers, Shortcut, ShortcutState};
@@ -31,7 +34,8 @@ const ICON_ALERT: &[u8] = include_bytes!("../icons/tray-alert.png");
 #[cfg(target_os = "macos")]
 const ICON_TEMPLATE: &[u8] = include_bytes!("../icons/tray-template.png");
 const PANEL: &str = "panel";
-const PANEL_WIDTH: f64 = 360.0;
+const SETTINGS: &str = "settings";
+const PANEL_WIDTH: f64 = 380.0;
 const MARGIN: f64 = 14.0;
 
 /// Where the panel opens: under the tray icon on a Mac, above the bottom-right corner on Windows.
@@ -46,35 +50,50 @@ struct Anchor {
 #[derive(Default)]
 struct SecureStartup { started: AtomicBool, tracker_issue: Mutex<Option<String>> }
 
+/// While saved credentials are restored, macOS must never show a Keychain password prompt: reads either succeed
+/// silently (the item belongs to this signing identity) or fail, and the app asks for a fresh browser approval.
+struct QuietKeychain(#[cfg(target_os = "macos")] Option<security_framework::os::macos::keychain::KeychainUserInteractionLock>);
+fn quiet_keychain() -> QuietKeychain {
+    #[cfg(target_os = "macos")]
+    { QuietKeychain(security_framework::os::macos::keychain::SecKeychain::disable_user_interaction().ok()) }
+    #[cfg(not(target_os = "macos"))]
+    { QuietKeychain() }
+}
+
 // A Keychain approval is an OS permission wait, not an app startup failure.
 // Start these only after the real WebView has rendered and acknowledged its health.
 fn start_secure_stores(app: &AppHandle) {
     if app.state::<SecureStartup>().started.swap(true, Ordering::SeqCst) { return; }
-    let session_app = app.clone();
-    tauri::async_runtime::spawn_blocking(move || session_app.state::<Companion>().restore_saved_session());
-    let tracker_app = app.clone();
+    let store_app = app.clone();
     tauri::async_runtime::spawn_blocking(move || {
-        let opened = tracker_app.path().app_local_data_dir().map_err(|_| "Pulse could not open saved work settings".to_string())
+        let quiet = quiet_keychain();
+        store_app.state::<Companion>().restore_saved_session();
+        let opened = store_app.path().app_local_data_dir().map_err(|_| "Pulse could not open saved work settings".to_string())
             .and_then(|path| Tracker::open(path.join("native-tracker.bin")));
+        drop(quiet);
         match opened {
             Ok(tracker) => {
-                let core = tracker_app.state::<AgentCore>().inner().clone();
+                let delegate_app = store_app.clone();
+                tracker.set_delegate(std::sync::Arc::new(move |path: &str, body: Option<Value>| {
+                    delegate_app.state::<Companion>().request(path, body).map_err(|e| e.message)
+                }));
+                let core = store_app.state::<AgentCore>().inner().clone();
                 if tracker.status(&core).paused { core.set_pause("until-resumed").ok(); }
-                tracker_app.manage(tracker.clone());
+                store_app.manage(tracker.clone());
                 let sync_core = core.clone();
                 let _ = thread::Builder::new().name("pulse-ingest".into()).spawn(move || loop { let _ = sync_core.sync_once(); thread::sleep(Duration::from_secs(15)); });
                 let (bridge_tracker, bridge_core) = (tracker.clone(), core.clone());
                 let _ = thread::Builder::new().name("pulse-adobe-bridge".into()).spawn(move || { let _ = pulse_desktop_core::bridge::serve(bridge_tracker, bridge_core); });
                 let _ = thread::Builder::new().name("pulse-sensors".into()).spawn(move || loop { let _ = tracker.tick(&core); thread::sleep(Duration::from_secs(5)); });
             }
-            Err(issue) => { *tracker_app.state::<SecureStartup>().tracker_issue.lock().unwrap() = Some(issue); }
+            Err(issue) => { *store_app.state::<SecureStartup>().tracker_issue.lock().unwrap() = Some(issue); }
         }
     });
 }
 
 fn ready_tracker(app: &AppHandle) -> Result<Tracker, String> {
     app.try_state::<Tracker>().map(|tracker| tracker.inner().clone())
-        .ok_or_else(|| "Your saved work settings are still protected by the OS. Allow Pulse in the system permission prompt, then try again.".into())
+        .ok_or_else(|| "Pulse is still opening your saved work settings. Try again in a moment.".into())
 }
 
 // ------------------------------------------------------------------------------------------------ the panel
@@ -107,7 +126,7 @@ fn place(app: &AppHandle, win: &WebviewWindow) {
     let _ = win.set_position(PhysicalPosition::new(x, y));
 }
 
-fn show_panel(app: &AppHandle) {
+pub(crate) fn show_panel(app: &AppHandle) {
     let Some(win) = panel(app) else { return };
     place(app, &win);
     app.state::<Mutex<Anchor>>().lock().unwrap().shown_at = Some(Instant::now());
@@ -131,9 +150,9 @@ fn toggle_panel(app: &AppHandle) {
     if win.is_visible().unwrap_or(false) { hide_panel(app); } else if !just_hidden { show_panel(app); }
 }
 
-fn open_url(url: &str) -> Result<(), String> {
+pub(crate) fn open_url(url: &str) -> Result<(), String> {
     #[cfg(target_os = "windows")]
-    let result = std::process::Command::new("rundll32").args(["url.dll,FileProtocolHandler", url]).spawn();
+    let result = { use std::os::windows::process::CommandExt; std::process::Command::new("rundll32").args(["url.dll,FileProtocolHandler", url]).creation_flags(0x0800_0000).spawn() };
     #[cfg(target_os = "macos")]
     let result = std::process::Command::new("open").arg(url).spawn();
     #[cfg(not(any(target_os = "windows", target_os = "macos")))]
@@ -141,18 +160,52 @@ fn open_url(url: &str) -> Result<(), String> {
     result.map(|_| ()).map_err(|_| format!("Open {url} in your browser"))
 }
 
-fn show_privacy(app: &AppHandle) {
-    if let Some(window) = app.get_webview_window("privacy") {
+// ------------------------------------------------------------------------------------------------ Settings
+/// One Settings sheet (General, Notifications, Check-in & presence, Privacy & permissions, Account, Updates & about).
+pub(crate) fn show_settings(app: &AppHandle, section: Option<String>) {
+    let section = section.filter(|s| s.len() <= 32 && s.chars().all(|c| c.is_ascii_alphanumeric() || c == '-'));
+    if let Some(window) = app.get_webview_window(SETTINGS) {
+        if let Some(s) = &section { let _ = window.eval(format!("window.pulseSettings?.go({})", json!(s))); }
+        let _ = window.unminimize();
         let _ = window.show();
         let _ = window.set_focus();
         return;
     }
-    let _ = WebviewWindowBuilder::new(app, "privacy", WebviewUrl::App("privacy.html".into()))
-        .title("Pulse · Settings & privacy")
-        .inner_size(1040., 720.)
-        .min_inner_size(880., 600.)
+    let url = format!("settings.html{}", section.map(|s| format!("#{s}")).unwrap_or_default());
+    let mut builder = WebviewWindowBuilder::new(app, SETTINGS, WebviewUrl::App(url.into()))
+        .title("Settings")
+        .inner_size(820., 600.)
+        .min_inner_size(700., 500.)
+        .maximizable(false)
         .center()
-        .build();
+        .visible(false);
+    #[cfg(target_os = "macos")]
+    { builder = builder.title_bar_style(tauri::TitleBarStyle::Transparent).hidden_title(true); }
+    #[cfg(windows)]
+    { builder = builder.effects(tauri::utils::config::WindowEffectsConfig { effects: vec![tauri::window::Effect::Mica], ..Default::default() }); }
+    if let Ok(window) = builder.build() {
+        let dark = matches!(window.theme(), Ok(tauri::Theme::Dark));
+        let _ = window.set_background_color(Some(if dark { tauri::window::Color(26, 26, 36, 255) } else { tauri::window::Color(250, 250, 252, 255) }));
+        let _ = window.show();
+        let _ = window.set_focus();
+    }
+}
+
+/// pulse:// links from the OS, a second launch, notifications or page shortcuts.
+pub(crate) fn deep_link(app: &AppHandle, raw: &str) {
+    match appwin::parse_link(raw) {
+        Some(appwin::Link::Page(path)) => appwin::open(app, Some(path)),
+        Some(appwin::Link::Settings(section)) => show_settings(app, section),
+        Some(appwin::Link::Panel) => show_panel(app),
+        None => {}
+    }
+}
+
+/// A launch from the Start menu, Dock, Finder or a second instance: the Pulse window, unless asked otherwise.
+fn launched(app: &AppHandle, args: &[String]) {
+    if let Some(link) = args.iter().find(|a| a.starts_with("pulse://")) { deep_link(app, link); return; }
+    if args.iter().any(|a| a == "--panel" || a == "--pinned") { show_panel(app); return; }
+    appwin::open(app, None);
 }
 
 // ------------------------------------------------------------------------------------------- companion commands
@@ -190,9 +243,12 @@ async fn companion_pair_start(app: AppHandle, base: String, expected_person: Opt
 
 #[tauri::command]
 async fn companion_pair_poll(app: AppHandle) -> Result<Value, String> {
-    tauri::async_runtime::spawn_blocking(move || app.state::<Companion>().pair_poll().map_err(err))
+    let poll_app = app.clone();
+    let result = tauri::async_runtime::spawn_blocking(move || poll_app.state::<Companion>().pair_poll().map_err(err))
         .await
-        .map_err(|_| "{\"message\":\"Pulse request interrupted\"}".to_string())?
+        .map_err(|_| "{\"message\":\"Pulse request interrupted\"}".to_string())??;
+    if result["status"] == "approved" { let _ = app.emit("pulse:signed-in", json!({})); }
+    Ok(result)
 }
 
 #[tauri::command]
@@ -211,14 +267,24 @@ async fn companion_password(app: AppHandle, base: String, username: String, pass
 #[tauri::command]
 async fn companion_sign_out(app: AppHandle) -> Result<Value, String> {
     if app.state::<Gate>().0.lock().unwrap().1 { return Err("Wait for Pulse to finish installing".into()); }
-    tauri::async_runtime::spawn_blocking(move || app.state::<Companion>().sign_out())
+    let out_app = app.clone();
+    let session = tauri::async_runtime::spawn_blocking(move || out_app.state::<Companion>().sign_out())
         .await
-        .map_err(|_| "Sign-out interrupted".to_string())
+        .map_err(|_| "Sign-out interrupted".to_string())?;
+    appwin::signed_out(&app);
+    let _ = app.emit("pulse:signed-out", json!({}));
+    Ok(session)
 }
 
+/// "Open in Pulse" links open in the Pulse window; the browser stays available from the menus.
 #[tauri::command]
-fn open_pulse(state: State<'_, Companion>, path: String) -> Result<(), String> {
-    let path = if path.starts_with('/') && !path.starts_with("//") { path } else { "/me".into() };
+fn open_pulse(app: AppHandle, path: String) -> Result<(), String> {
+    appwin::open(&app, Some(appwin::safe_path(&path).unwrap_or_else(|| "/me".into())));
+    Ok(())
+}
+#[tauri::command]
+fn open_in_browser(state: State<'_, Companion>, path: String) -> Result<(), String> {
+    let path = appwin::safe_path(&path).unwrap_or_else(|| "/me".into());
     open_url(&format!("{}{}", companion::site(&state.base()), path))
 }
 
@@ -240,9 +306,12 @@ fn panel_hide(app: AppHandle) { hide_panel(&app); }
 #[tauri::command]
 fn panel_pin(app: AppHandle, pinned: bool) { app.state::<Mutex<Anchor>>().lock().unwrap().pinned = pinned; }
 
-/// The tray mirrors the day: icon tone, tooltip, and on a Mac the timer next to the icon.
+/// The tray mirrors the day: icon tone, tooltip, and on a Mac the timer next to the icon. The Pulse window's dock or
+/// taskbar badge shows the unread count.
 #[tauri::command]
 fn set_tray(app: AppHandle, text: String, tone: String, title: String) {
+    let unread=pings::unread(&app);
+    appwin::badge(&app, unread);
     let Some(tray) = app.tray_by_id("pulse") else { return };
     let (text,tone,title)=if title=="Pulse"&&text.is_empty()&&tone=="neutral"{
         app.state::<pings::Pings>().tray.lock().unwrap().clone()
@@ -250,7 +319,6 @@ fn set_tray(app: AppHandle, text: String, tone: String, title: String) {
         *app.state::<pings::Pings>().tray.lock().unwrap()=(text.clone(),tone.clone(),title.clone());
         (text,tone,title)
     };
-    let unread=pings::unread(&app);
     #[cfg(target_os = "macos")]
     {
         let text=if unread>0{unread.to_string()}else{text};
@@ -268,7 +336,7 @@ fn set_tray(app: AppHandle, text: String, tone: String, title: String) {
 }
 
 #[tauri::command]
-fn notify(app: AppHandle, title: String, body: String) -> Result<(), String> {
+pub(crate) fn notify(app: AppHandle, title: String, body: String) -> Result<(), String> {
     app.notification().builder().title(title.chars().take(80).collect::<String>()).body(body.chars().take(200).collect::<String>()).show().map_err(|_| "Notifications are turned off for Pulse".to_string())
 }
 
@@ -282,13 +350,38 @@ fn autostart_set(app: AppHandle, enabled: bool) -> Result<bool, String> {
     Ok(manager.is_enabled().unwrap_or(enabled))
 }
 
+/// Launch options for demos and runner screenshots: --demo, --tab=inbox|chats|conversation, --theme=light|dark.
+fn launch_options() -> Value {
+    let args: Vec<String> = std::env::args().collect();
+    let value = |name: &str| args.iter().find_map(|a| a.strip_prefix(&format!("--{name}="))).filter(|v| v.len() <= 20 && v.chars().all(|c| c.is_ascii_alphanumeric() || c == '-')).map(str::to_string);
+    serde_json::json!({"demo": args.iter().any(|a| a == "--demo"), "tab": value("tab"), "theme": value("theme")})
+}
 #[tauri::command]
 fn app_info() -> Value {
-    serde_json::json!({"version": env!("CARGO_PKG_VERSION"), "platform": companion::platform(), "shortcut": if cfg!(target_os = "macos") { "⌃⌥P" } else { "Ctrl+Alt+P" }})
+    serde_json::json!({"version": env!("CARGO_PKG_VERSION"), "platform": companion::platform(), "shortcut": if cfg!(target_os = "macos") { "⌃⌥P" } else { "Ctrl+Alt+P" }, "launch": launch_options()})
 }
 
 #[tauri::command]
-fn open_privacy(app: AppHandle) { show_privacy(&app); }
+fn open_settings(app: AppHandle, section: Option<String>) { show_settings(&app, section); }
+/// The exact OS settings page a permission lives on (only these two).
+#[tauri::command]
+fn open_os_settings(page: String) -> Result<(), String> {
+    let url = match (page.as_str(), cfg!(target_os = "macos")) {
+        ("location", true) => "x-apple.systempreferences:com.apple.preference.security?Privacy_LocationServices",
+        ("location", false) => "ms-settings:privacy-location",
+        ("notifications", true) => "x-apple.systempreferences:com.apple.preference.notifications",
+        ("notifications", false) => "ms-settings:notifications",
+        _ => return Err("Unknown settings page".into()),
+    };
+    open_url(url)
+}
+/// Older panels call this; the old Settings & privacy window is gone.
+#[tauri::command]
+fn open_privacy(app: AppHandle) { show_settings(&app, Some("privacy".into())); }
+
+/// Settings changed something the panel shows (Pip, reminders, theme): tell every Pulse page.
+#[tauri::command]
+fn prefs_changed(app: AppHandle) { let _ = app.emit("pulse:prefs", json!({})); }
 
 // ------------------------------------------------- optional focus/idle metadata (off unless the notice is accepted)
 #[tauri::command]
@@ -304,30 +397,26 @@ fn tracker_status(app: AppHandle, core: State<'_, AgentCore>) -> Value {
         }
     }
 }
+/// Work activity on or off in Settings, through this computer's existing pairing (no second sign-in).
+#[tauri::command]
+async fn activity_set(app: AppHandle, enabled: bool) -> Result<Value, String> {
+    let tracker = ready_tracker(&app)?;
+    let device = app.state::<Companion>().session()["deviceId"].as_str().map(str::to_owned).ok_or("Sign in to Pulse on this computer first")?;
+    let core = app.state::<AgentCore>().inner().clone();
+    tauri::async_runtime::spawn_blocking(move || {
+        tracker.configure_delegated(&device, if enabled { vec!["activity_context".into()] } else { vec![] })?;
+        core.set_pause(if enabled { "resume" } else { "until-resumed" })?;
+        Ok(serde_json::to_value(tracker.status(&core)).unwrap_or(Value::Null))
+    })
+    .await
+    .map_err(|_| "Native request interrupted".to_string())?
+}
 #[tauri::command]
 async fn tracker_configure(app: AppHandle, settings: Settings) -> Result<(), String> {
     let tracker = ready_tracker(&app)?;
     tauri::async_runtime::spawn_blocking(move || tracker.configure(settings))
         .await
         .map_err(|_| "Native request interrupted".to_string())?
-}
-#[tauri::command]
-async fn tracker_login(app: AppHandle, api: String, username: String, password: String) -> Result<Value, String> {
-    let tracker = ready_tracker(&app)?;
-    tauri::async_runtime::spawn_blocking(move || tracker.login(api, username, password))
-        .await
-        .map_err(|_| "Native request interrupted".to_string())?
-}
-#[tauri::command]
-async fn tracker_verify_login(app: AppHandle, api: String, challenge: String, code: String) -> Result<Value, String> {
-    let tracker = ready_tracker(&app)?;
-    tauri::async_runtime::spawn_blocking(move || tracker.verify_login(api, challenge, code))
-        .await
-        .map_err(|_| "Native request interrupted".to_string())?
-}
-#[tauri::command]
-fn tracker_open_recovery(state: State<'_, Companion>) -> Result<(), String> {
-    open_url(&format!("{}/login", companion::site(&state.base())))
 }
 #[tauri::command]
 fn tracker_pause(app: AppHandle, core: State<'_, AgentCore>, paused: bool) -> Result<(), String> {
@@ -347,15 +436,67 @@ async fn tracker_sign_out(app: AppHandle) -> Result<(), String> {
         .map_err(|_| "Native request interrupted".to_string())?
 }
 #[tauri::command]
-fn open_workspace(state: State<'_, Companion>) -> Result<(), String> {
-    open_url(&format!("{}/me", companion::site(&state.base())))
+fn open_workspace(app: AppHandle) -> Result<(), String> { appwin::open(&app, Some("/me".into())); Ok(()) }
+
+// ------------------------------------------------------------------------------------------------ menus
+/// The macOS menu bar for the Pulse window: app, Edit (copy/paste need it), View, Go, Window and Help.
+#[cfg(target_os = "macos")]
+fn app_menu(app: &AppHandle) -> tauri::Result<Menu<tauri::Wry>> {
+    let item = |id: &str, text: &str, accel: Option<&str>| MenuItem::with_id(app, id, text, true, accel);
+    let about = PredefinedMenuItem::about(app, Some("About Pulse"), Some(tauri::menu::AboutMetadata { name: Some("Pulse".into()), version: Some(env!("CARGO_PKG_VERSION").into()), copyright: Some("© 2026 Estate Autopilots".into()), ..Default::default() }))?;
+    let pulse = Submenu::with_items(app, "Pulse", true, &[
+        &about, &PredefinedMenuItem::separator(app)?,
+        &item("settings", "Settings…", Some("Cmd+,"))?, &item("check-updates", "Check for Updates…", None)?,
+        &PredefinedMenuItem::separator(app)?, &PredefinedMenuItem::services(app, None)?, &PredefinedMenuItem::separator(app)?,
+        &PredefinedMenuItem::hide(app, Some("Hide Pulse"))?, &PredefinedMenuItem::hide_others(app, None)?, &PredefinedMenuItem::show_all(app, None)?,
+        &PredefinedMenuItem::separator(app)?, &item("quit", "Quit Pulse", Some("Cmd+Q"))?,
+    ])?;
+    let edit = Submenu::with_items(app, "Edit", true, &[
+        &PredefinedMenuItem::undo(app, None)?, &PredefinedMenuItem::redo(app, None)?, &PredefinedMenuItem::separator(app)?,
+        &PredefinedMenuItem::cut(app, None)?, &PredefinedMenuItem::copy(app, None)?, &PredefinedMenuItem::paste(app, None)?, &PredefinedMenuItem::select_all(app, None)?,
+    ])?;
+    let view = Submenu::with_items(app, "View", true, &[
+        &item("reload", "Reload", Some("Cmd+R"))?, &PredefinedMenuItem::separator(app)?,
+        &item("zoom-reset", "Actual Size", Some("Cmd+0"))?, &item("zoom-in", "Zoom In", Some("Cmd+="))?, &item("zoom-out", "Zoom Out", Some("Cmd+-"))?,
+        &PredefinedMenuItem::separator(app)?, &PredefinedMenuItem::fullscreen(app, None)?,
+    ])?;
+    let go = Submenu::with_items(app, "Go", true, &[
+        &item("back", "Back", Some("Cmd+["))?, &item("forward", "Forward", Some("Cmd+]"))?, &PredefinedMenuItem::separator(app)?,
+        &item("search", "Search…", Some("Cmd+K"))?, &PredefinedMenuItem::separator(app)?,
+        &item("go:/", "Home", Some("Cmd+Shift+H"))?, &item("go:/me", "My desk", Some("Cmd+1"))?, &item("go:/inbox", "Inbox", Some("Cmd+2"))?, &item("go:/chats", "Chats", Some("Cmd+3"))?,
+    ])?;
+    let window = Submenu::with_items(app, "Window", true, &[
+        &PredefinedMenuItem::minimize(app, None)?, &PredefinedMenuItem::maximize(app, Some("Zoom"))?, &PredefinedMenuItem::separator(app)?,
+        &item("panel", "Quick panel  ⌃⌥P", None)?, &item("main", "Pulse window", None)?,
+    ])?;
+    let help = Submenu::with_items(app, "Help", true, &[&item("feedback", "Send feedback…", None)?, &item("web", "Open Pulse in the browser", None)?])?;
+    Menu::with_items(app, &[&pulse, &edit, &view, &go, &window, &help])
+}
+
+fn menu_action(app: &AppHandle, id: &str) {
+    match id {
+        "panel" => show_panel(app),
+        "main" => appwin::open(app, None),
+        "web" => { let _ = open_url(&format!("{}/me", companion::site(&app.state::<Companion>().base()))); }
+        "settings" | "privacy" => show_settings(app, None),
+        "check-updates" => { show_settings(app, Some("updates".into())); }
+        "feedback" => show_settings(app, Some("feedback".into())),
+        "quit" => app.exit(0),
+        "back" | "forward" | "reload" | "search" => appwin::command(app, id),
+        "zoom-in" => appwin::zoom(app, 1),
+        "zoom-out" => appwin::zoom(app, -1),
+        "zoom-reset" => appwin::zoom(app, 0),
+        go if go.starts_with("go:") => appwin::open(app, Some(go[3..].to_string())),
+        _ => {}
+    }
 }
 
 pub fn run() {
+    if acceptance::run() { return; }
     let toggle = Shortcut::new(Some(Modifiers::CONTROL | Modifiers::ALT), Code::KeyP);
     let register = toggle.clone();
     tauri::Builder::default()
-        .plugin(tauri_plugin_single_instance::init(|app, _args, _cwd| show_panel(app)))
+        .plugin(tauri_plugin_single_instance::init(|app, args, _cwd| launched(app, &args)))
         .plugin(tauri_plugin_autostart::init(MacosLauncher::LaunchAgent, Some(vec!["--autostart"])))
         .plugin(tauri_plugin_notification::init())
         .plugin(tauri_plugin_updater::Builder::new().build())
@@ -371,17 +512,25 @@ pub fn run() {
         .manage(Companion::new())
         .manage(SecureStartup::default())
         .manage(pings::Pings::default())
+        .manage(appwin::AppWindow::default())
+        .manage(appwin::Zoom::default())
+        .manage(presence::Presence::default())
         .manage(Mutex::new(Anchor::default()))
+        .on_menu_event(|app, event| menu_action(app, event.id().as_ref()))
         .setup(move |app| {
             #[cfg(target_os = "macos")]
-            app.set_activation_policy(tauri::ActivationPolicy::Accessory);
+            {
+                app.set_activation_policy(tauri::ActivationPolicy::Accessory);
+                let menu = app_menu(app.handle())?;
+                app.set_menu(menu)?;
+            }
             let local_data_dir = app.path().app_local_data_dir()?;
             std::fs::create_dir_all(&local_data_dir)?;
             // Optional activity metadata: starts paused and stays off unless the person accepts the published notice.
             let core = AgentCore::from_environment(local_data_dir.join("outbox.bin")).map_err(std::io::Error::other)?;
             app.manage(core.clone());
 
-            // The companion panel: small, frameless, above other windows, out of the taskbar.
+            // The quick panel: small, frameless, above other windows, out of the taskbar.
             let win = WebviewWindowBuilder::new(app, PANEL, WebviewUrl::App("index.html".into()))
                 .title("Pulse")
                 .inner_size(PANEL_WIDTH, 460.0)
@@ -404,11 +553,13 @@ pub fn run() {
                 if let WindowEvent::CloseRequested { api, .. } = event { api.prevent_close(); hide_panel(&handle); }
             });
 
-            let open = MenuItem::with_id(app, "panel", "Open Pulse panel", true, Some("CmdOrCtrl+Alt+P"))?;
+            let open = MenuItem::with_id(app, "main", "Open Pulse", true, None::<&str>)?;
+            let quick = MenuItem::with_id(app, "panel", "Quick panel", true, Some("CmdOrCtrl+Alt+P"))?;
             let web = MenuItem::with_id(app, "web", "Open Pulse in the browser", true, None::<&str>)?;
-            let privacy = MenuItem::with_id(app, "privacy", "Settings & privacy…", true, None::<&str>)?;
+            let settings = MenuItem::with_id(app, "settings", "Settings…", true, None::<&str>)?;
+            let feedback = MenuItem::with_id(app, "feedback", "Send feedback…", true, None::<&str>)?;
             let quit = MenuItem::with_id(app, "quit", "Quit Pulse", true, None::<&str>)?;
-            let menu = Menu::with_items(app, &[&open, &web, &PredefinedMenuItem::separator(app)?, &privacy, &PredefinedMenuItem::separator(app)?, &quit])?;
+            let menu = Menu::with_items(app, &[&open, &quick, &web, &PredefinedMenuItem::separator(app)?, &settings, &feedback, &PredefinedMenuItem::separator(app)?, &quit])?;
             #[cfg(target_os = "macos")]
             let icon = Image::from_bytes(ICON_TEMPLATE)?;
             #[cfg(not(target_os = "macos"))]
@@ -428,20 +579,24 @@ pub fn run() {
                         toggle_panel(app);
                     }
                 })
-                .on_menu_event(|app, event| match event.id().as_ref() {
-                    "panel" => show_panel(app),
-                    "web" => { let _ = open_url(&format!("{}/me", companion::site(&app.state::<Companion>().base()))); }
-                    "privacy" => show_privacy(app),
-                    "quit" => app.exit(0),
-                    _ => {}
-                })
+                // Menu clicks (tray and menu bar) go through the app-wide handler on the builder.
                 .build(app)?;
             pings::start(app.handle().clone());
+            presence::start(app.handle().clone());
             let _ = app.global_shortcut().register(register);
-            // Opened by the person (not at sign-in to the computer): say hello once.
-            // --pinned keeps the panel open (screenshots on build runners and demos).
-            if std::env::args().any(|a| a == "--pinned") { app.state::<Mutex<Anchor>>().lock().unwrap().pinned = true; }
-            if !std::env::args().any(|a| a == "--autostart") { show_panel(app.handle()); }
+            // --pinned keeps the panel open (screenshots on build runners and demos); --autostart stays in the tray;
+            // an update restart and the updater acceptance show the panel as before; any other launch opens the
+            // Pulse window (or the pulse:// link it was opened with).
+            let args: Vec<String> = std::env::args().collect();
+            if args.iter().any(|a| a == "--pinned") { app.state::<Mutex<Anchor>>().lock().unwrap().pinned = true; }
+            if let Some(section) = args.iter().find_map(|a| a.strip_prefix("--settings=")) {
+                show_settings(app.handle(), Some(section.to_string()));
+            } else if args.iter().any(|a| a == "--autostart") {
+            } else if args.iter().any(|a| a == "--pinned" || a == "--update-boot" || a == "--updater-acceptance" || a == "--panel") {
+                show_panel(app.handle());
+            } else {
+                launched(app.handle(), &args);
+            }
             updater::hosted_acceptance(app.handle());
             Ok(())
         })
@@ -454,12 +609,14 @@ pub fn run() {
             companion_request,
             pings::companion_ping_state,
             pings::companion_ping_enable,
+            pings::companion_ping_fix,
             companion_pair_start,
             companion_pair_poll,
             companion_pair_cancel,
             companion_password,
             companion_sign_out,
             open_pulse,
+            open_in_browser,
             panel_fit,
             panel_show,
             panel_hide,
@@ -469,13 +626,19 @@ pub fn run() {
             autostart_get,
             autostart_set,
             app_info,
+            open_settings,
+            open_os_settings,
             open_privacy,
+            prefs_changed,
+            appwin::open_app,
+            appwin::app_window_state,
+            appwin::app_window_go,
+            presence::presence_status,
+            presence::presence_check,
             agent_status,
             tracker_status,
+            activity_set,
             tracker_configure,
-            tracker_login,
-            tracker_verify_login,
-            tracker_open_recovery,
             tracker_pause,
             tracker_sign_out,
             bridge_info,
@@ -483,9 +646,15 @@ pub fn run() {
         ])
         .build(tauri::generate_context!())
         .expect("error while building Pulse")
-        .run(|app, event| {
+        .run(|app, event| match event {
             // Closing the last window keeps Pulse in the tray.
-            if let tauri::RunEvent::ExitRequested { api, code: None, .. } = event { api.prevent_exit(); let _ = app; }
+            tauri::RunEvent::ExitRequested { api, code: None, .. } => api.prevent_exit(),
+            // Dock icon or a second open from Finder: the Pulse window.
+            #[cfg(target_os = "macos")]
+            tauri::RunEvent::Reopen { .. } => appwin::open(app, None),
+            #[cfg(target_os = "macos")]
+            tauri::RunEvent::Opened { urls } => { for url in urls { deep_link(app, url.as_str()); } }
+            _ => { let _ = app; }
         });
 }
 

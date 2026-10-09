@@ -2,14 +2,14 @@
   "expo": {
     "name": "Pulse",
     "slug": "pulse-native",
-    "version": "0.3.4",
+    "version": "1.0.0",
     "scheme": "pulse",
     "orientation": "portrait",
     "userInterfaceStyle": "automatic",
     "icon": "./assets/icon.png",
     "ios": {
       "bundleIdentifier": "com.pulse.work.mobile",
-      "buildNumber": "3004",
+      "buildNumber": "1000000",
       "supportsTablet": true,
       "entitlements": {
         "com.apple.developer.networking.wifi-info": true
@@ -21,7 +21,7 @@
     },
     "android": {
       "package": "com.pulse.work.mobile",
-      "versionCode": 3004,
+      "versionCode": 1000000,
       "adaptiveIcon": {
         "foregroundImage": "./assets/adaptive-icon.png",
         "backgroundColor": "#ECE8FF"

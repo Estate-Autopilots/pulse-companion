@@ -93,6 +93,10 @@ struct Runtime {
     last_flush: Instant,
     last_tick: Instant,
 }
+/// Settings.api value for a tracker that uses the companion's device pairing instead of its own sign-in.
+pub const DELEGATED: &str = "pulse-device";
+/// Sends one native API call with the companion's device credential (shared single-flight refresh).
+pub type Delegate = Arc<dyn Fn(&str, Option<Value>) -> Result<Value, String> + Send + Sync>;
 #[derive(Clone)]
 pub struct Tracker {
     runtime: Arc<Mutex<Runtime>>,
@@ -100,6 +104,7 @@ pub struct Tracker {
     key: [u8; 32],
     client: Client,
     refresh_lock: Arc<Mutex<()>>,
+    delegate: Arc<Mutex<Option<Delegate>>>,
 }
 
 #[cfg(any(windows,target_os="macos"))]
@@ -114,26 +119,28 @@ fn now() -> String {
 }
 #[cfg(any(windows, target_os = "macos"))]
 fn key() -> Result<[u8; 32], String> {
-    let entry = keyring::Entry::new("com.pulse.work", "tracker-key")
-        .map_err(|_| "Cannot open system credential store")?;
-    let secret = match entry.get_password() {
-        Ok(s) => s,
-        Err(keyring::Error::NoEntry) => {
-            let mut k = [0u8; 32];
-            OsRng.fill_bytes(&mut k);
-            let s = STANDARD.encode(k);
-            entry
-                .set_password(&s)
-                .map_err(|_| "Cannot save tracker key")?;
-            s
+    use crate::startup::{restore_choice, Lookup};
+    // The store key lives in the entry the current (stably signed) app owns. An older build's key is reused when it
+    // can be read silently; otherwise a fresh key starts a fresh local store, and nothing locked is ever prompted for.
+    let lookup = |name: &str| -> Lookup<String> {
+        match keyring::Entry::new("com.pulse.work", name).map(|e| e.get_password()) {
+            Ok(Ok(s)) => Lookup::Found(s),
+            Ok(Err(keyring::Error::NoEntry)) => Lookup::Missing,
+            _ => Lookup::Unreadable,
         }
-        Err(_) => return Err("System credential store unavailable".into()),
     };
-    STANDARD
-        .decode(secret)
-        .map_err(|_| "Invalid tracker key")?
-        .try_into()
-        .map_err(|_| "Invalid tracker key".into())
+    let decode = |s: &str| -> Option<[u8; 32]> { STANDARD.decode(s).ok()?.try_into().ok() };
+    let (found, migrate, _) = restore_choice(lookup("tracker-key-v2"), || lookup("tracker-key"));
+    if let Some(k) = found.as_deref().and_then(decode) {
+        if migrate { let _ = keyring::Entry::new("com.pulse.work", "tracker-key-v2").and_then(|e| e.set_password(&STANDARD.encode(k))); }
+        return Ok(k);
+    }
+    let mut k = [0u8; 32];
+    OsRng.fill_bytes(&mut k);
+    keyring::Entry::new("com.pulse.work", "tracker-key-v2")
+        .and_then(|e| e.set_password(&STANDARD.encode(k)))
+        .map_err(|_| "Cannot save tracker key".to_string())?;
+    Ok(k)
 }
 #[cfg(not(any(windows, target_os = "macos")))]
 fn key() -> Result<[u8; 32], String> {
@@ -141,7 +148,16 @@ fn key() -> Result<[u8; 32], String> {
 }
 impl Tracker {
     pub fn open(path: PathBuf) -> Result<Self, String> {
-        Self::with_key(path, key()?)
+        let key = key()?;
+        match Self::with_key(path.clone(), key) {
+            // Sealed with a key this build cannot read (an older build's locked key): set it aside, unread and
+            // unsent, and start clean. Work activity then stays off until the person turns it on again.
+            Err(e) if e == "Cannot unlock tracker state" || e == "Invalid tracker state" => {
+                let _ = fs::rename(&path, path.with_extension("sealed"));
+                Self::with_key(path, key)
+            }
+            other => other,
+        }
     }
     fn with_key(path: PathBuf, key: [u8; 32]) -> Result<Self, String> {
         let mut store: Store = if path.exists() {
@@ -156,16 +172,18 @@ impl Tracker {
         } else {
             Store::default()
         };
-        // OS-backed credentials are never serialized with metadata.
+        // OS-backed credentials are never serialized with metadata. A tracker on the companion's pairing has none.
+        if store.settings.api == DELEGATED { store.settings.session = DELEGATED.into(); }
         #[cfg(any(windows,target_os="macos"))]
-        if let Ok(entry)=keyring::Entry::new("com.pulse.work","native-tokens") {
+        if store.settings.api != DELEGATED { if let Ok(entry)=keyring::Entry::new("com.pulse.work","native-tokens") {
             if let Ok(value)=entry.get_password(){if let Ok(tokens)=serde_json::from_str::<Value>(&value){
                 if tokens["deviceId"]==store.settings.device_id {store.settings.session=tokens["accessToken"].as_str().unwrap_or("").into();store.settings.refresh_token=tokens["refreshToken"].as_str().unwrap_or("").into();}
             }}
-        }
+        } }
         store.pause=true; // Restart/process gaps require a fresh capture handshake.
         Ok(Self {
             refresh_lock: Arc::new(Mutex::new(())),
+            delegate: Arc::new(Mutex::new(None)),
             runtime: Arc::new(Mutex::new(Runtime {
                 generation: 0,
                 boot_id: uuid::Uuid::new_v4().to_string(),
@@ -235,19 +253,34 @@ impl Tracker {
         let _=self.call(&settings,&format!("devices/{}/pause",settings.device_id),Some(json!({"paused":true})));
         Ok(())
     }
+    pub fn set_delegate(&self, delegate: Delegate) { *self.delegate.lock().unwrap() = Some(delegate); }
+    /// Work activity on (purposes) or off (none) for this computer's existing Pulse pairing: no second sign-in,
+    /// no separate device and no tracker credential in the OS store.
+    pub fn configure_delegated(&self, device_id: &str, purposes: Vec<String>) -> Result<(), String> {
+        if device_id.is_empty() { return Err("Sign in to Pulse on this computer first".into()); }
+        let current = self.runtime.lock().unwrap().store.settings.clone();
+        let break_tools = if current.api == DELEGATED { current.break_tools } else { vec![] };
+        self.configure(Settings { api: DELEGATED.into(), session: DELEGATED.into(), device_id: device_id.into(), purposes, work_start: 9, work_end: 19, break_tools, ..Default::default() })
+    }
     pub fn configure(&self, mut s: Settings) -> Result<(), String> {
         let generation = self.runtime.lock().unwrap().generation;
-        let url = url::Url::parse(&s.api).map_err(|_| "Invalid API address")?;
-        if url.scheme() != "https"
-            || url.host_str().is_none()
-            || !url.username().is_empty()
-            || url.password().is_some()
-            || url.query().is_some()
-            || url.fragment().is_some()
-        {
-            return Err("Use a secure native API address".into());
+        let delegated = s.api == DELEGATED;
+        if delegated {
+            s.session = DELEGATED.into();
+            s.refresh_token.clear();
+        } else {
+            let url = url::Url::parse(&s.api).map_err(|_| "Invalid API address")?;
+            if url.scheme() != "https"
+                || url.host_str().is_none()
+                || !url.username().is_empty()
+                || url.password().is_some()
+                || url.query().is_some()
+                || url.fragment().is_some()
+            {
+                return Err("Use a secure native API address".into());
+            }
+            s.api = s.api.trim_end_matches('/').into();
         }
-        s.api = s.api.trim_end_matches('/').into();
         if s.work_start == s.work_end
             || s.work_end > 24
             || s.folders.len() > 20
@@ -284,6 +317,7 @@ impl Tracker {
             d.iter()
                 .any(|x| x["id"] == s.device_id && x["revokedAt"].is_null())
         }) {
+            if delegated { return Err("This computer’s Pulse sign-in was removed. Sign in again, then turn this on.".into()); }
             s.device_id.clear();
         }
         if s.device_id.is_empty() {
@@ -299,7 +333,7 @@ impl Tracker {
         }) {
             return Err("Invalid tracking purpose".into());
         }
-        if s.refresh_token.is_empty(){let issued=self.call(&s,"native/exchange",Some(json!({"deviceId":s.device_id})))?;
+        if !delegated && s.refresh_token.is_empty(){let issued=self.call(&s,"native/exchange",Some(json!({"deviceId":s.device_id})))?;
             s.session=issued["accessToken"].as_str().ok_or("Device exchange failed")?.into();s.refresh_token=issued["refreshToken"].as_str().ok_or("Refresh credential unavailable")?.into();}
         if !s.purposes.is_empty(){
         let policy=self.call(&s,"devices/policy",None)?;
@@ -321,7 +355,7 @@ impl Tracker {
             return Err("Connection cancelled. Sign in again when ready.".into());
         }
         if r.store.settings.person_id != s.person_id || r.store.settings.api != s.api {
-            clear_credentials();
+            if !delegated { clear_credentials(); }
             r.store = Store::default();
         }
         r.store
@@ -331,7 +365,7 @@ impl Tracker {
             .today
             .retain(|e| s.purposes.iter().any(|p| e["purpose"] == p.as_str()));
         r.generation = r.generation.wrapping_add(1);
-        store_credentials(&s)?;
+        if !delegated { store_credentials(&s)?; }
         r.store.outbox.clear();
         r.store.pause=s.purposes.is_empty();
         r.store.settings = s;
@@ -343,10 +377,14 @@ impl Tracker {
         r.projects.clear();
         r.files.clear();
         self.persist(&r)?;drop(r);
-        let _=self.call(&health_settings,&format!("devices/{}/health",health_settings.device_id),Some(json!({"health":"healthy","appVersion":"0.1.0-r14","capabilities":{"focus":"unknown","idle":"unknown","export":"healthy","parser":"unsupported","commands":"unknown"}})));
+        let _=self.call(&health_settings,&format!("devices/{}/health",health_settings.device_id),Some(json!({"health":"healthy","appVersion":std::env::var("PULSE_COMPILED_VERSION").unwrap_or_else(|_|"0.0.0".into()),"capabilities":{"focus":"unknown","idle":"unknown","export":"healthy","parser":"unsupported","commands":"unknown"}})));
         Ok(())
     }
     fn call(&self, s: &Settings, path: &str, body: Option<Value>) -> Result<Value, String> {
+        if s.api == DELEGATED {
+            let delegate = self.delegate.lock().unwrap().clone().ok_or("Sign in to Pulse on this computer first")?;
+            return delegate(path, body);
+        }
         let request=|settings:&Settings| {
             let mut req=if body.is_some(){self.client.post(format!("{}/{path}",settings.api))}else{self.client.get(format!("{}/{path}",settings.api))};
             req=if settings.refresh_token.is_empty(){req.header("x-pulse-session",&settings.session)}else{req.bearer_auth(&settings.session)};
@@ -396,7 +434,7 @@ impl Tracker {
             let mut r = self.runtime.lock().unwrap();
             let settings = r.store.settings.clone();
             r.generation = r.generation.wrapping_add(1);
-            clear_credentials();
+            if settings.api != DELEGATED { clear_credentials(); }
             r.store = Store::default();
             r.connected = false;
             r.issue = None;
@@ -410,6 +448,14 @@ impl Tracker {
             (settings, r.generation)
         };
         // Collection and local credentials stop before any network request can fail or wait.
+        if s.api == DELEGATED {
+            // The device belongs to the companion's sign-in: withdraw consent only.
+            if !s.device_id.is_empty() && self.call(&s, &format!("devices/{}/consent", s.device_id), Some(json!({"purposes":[]}))).is_err() {
+                let mut current = self.runtime.lock().unwrap();
+                if current.generation == generation { current.issue = Some("Work activity is off here. Pulse will confirm when you are back online.".into()); }
+            }
+            return Ok(());
+        }
         if !s.device_id.is_empty()
             && self
                 .call(

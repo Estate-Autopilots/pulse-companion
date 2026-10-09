@@ -18,6 +18,28 @@ impl<T> DeferredCredentials<T> {
         if self.restoring.swap(false, Ordering::SeqCst) { *current = value; }
     }
 }
+/// What a silent (no-prompt) read of one OS credential entry found.
+#[derive(Debug, PartialEq)]
+pub enum Lookup<T> { Found(T), Missing, Unreadable }
+
+/// The calm message when macOS keeps an older build's saved sign-in locked: sign in again, never a prompt loop.
+pub const SIGN_IN_AGAIN: &str = "Pulse was updated and macOS keeps your earlier sign-in locked to the old version. Sign in again once: your settings and saved work are kept, and later updates keep you signed in.";
+
+/// Which saved sign-in to use after an update. The current entry (written by the stable signing identity) wins;
+/// a readable entry from an earlier build is moved to the current entry; an unreadable one asks for a fresh
+/// browser approval instead of an OS password prompt.
+pub fn restore_choice<T>(current: Lookup<T>, legacy: impl FnOnce() -> Lookup<T>) -> (Option<T>, bool, Option<&'static str>) {
+    match current {
+        Lookup::Found(value) => (Some(value), false, None),
+        Lookup::Unreadable => (None, false, Some(SIGN_IN_AGAIN)),
+        Lookup::Missing => match legacy() {
+            Lookup::Found(value) => (Some(value), true, None),
+            Lookup::Missing => (None, false, None),
+            Lookup::Unreadable => (None, false, Some(SIGN_IN_AGAIN)),
+        },
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -45,5 +67,19 @@ mod tests {
         state.finish_restore(Some("saved-account"));
         assert_eq!(*state.lock().unwrap(), Some("saved-account"));
         assert!(!state.is_restoring());
+    }
+    #[test] fn current_entry_wins_without_touching_the_old_one() {
+        let (value, migrate, notice) = restore_choice(Lookup::Found("v2"), || panic!("legacy must not be read"));
+        assert_eq!((value, migrate, notice), (Some("v2"), false, None));
+    }
+    #[test] fn a_readable_old_entry_moves_to_the_current_identity() {
+        assert_eq!(restore_choice(Lookup::Missing, || Lookup::Found("old")), (Some("old"), true, None));
+    }
+    #[test] fn a_locked_old_entry_asks_to_sign_in_again_instead_of_prompting() {
+        assert_eq!(restore_choice::<&str>(Lookup::Missing, || Lookup::Unreadable), (None, false, Some(SIGN_IN_AGAIN)));
+        assert_eq!(restore_choice::<&str>(Lookup::Unreadable, || Lookup::Missing), (None, false, Some(SIGN_IN_AGAIN)));
+    }
+    #[test] fn nothing_saved_is_a_plain_first_sign_in() {
+        assert_eq!(restore_choice::<&str>(Lookup::Missing, || Lookup::Missing), (None, false, None));
     }
 }

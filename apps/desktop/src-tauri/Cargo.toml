@@ -1,6 +1,6 @@
 [package]
 name = "pulse-desktop"
-version = "0.3.4"
+version = "1.0.0"
 description = "Pulse Companion: check in, take a break and check out from the tray"
 authors = ["Estate Autopilots"]
 edition = "2021"
@@ -33,3 +33,5 @@ keyring = { version = "3", features = ["windows-native"] }
 [target.'cfg(target_os = "macos")'.dependencies]
 mac-usernotifications = "=0.3.1"
 keyring = { version = "3", features = ["apple-native"] }
+# Already in the tree through keyring: lets Pulse read saved sign-ins without ever showing a Keychain prompt.
+security-framework = "3"

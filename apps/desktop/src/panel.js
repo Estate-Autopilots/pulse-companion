@@ -1,32 +1,39 @@
-// The desktop companion panel (Windows tray / Mac menu bar). Uses the shared companion core; the Rust side keeps
+// The desktop quick panel (Windows tray / Mac menu bar). Uses the shared companion core; the Rust side keeps
 // the device credential, talks to Pulse, positions the window, shows notifications and drives the tray.
+// Settings live in their own window (settings.html); the full Pulse opens in the Pulse window.
 import { applyLocal, badge, celebration, clockOffset, deriveView, demoClient, dueReminders, enqueue, outcomeOf, prefsWith, prune, queuedRequest, settle, shouldPopUp, projected } from './companion/index.js';
 import { UpdateController, canOfferUpdate } from './companion/updates.js';
 import { updateCard } from './companion/update-card.js';
 import { mountCommunications } from './companion/communications.js';
-import { icon, mountPanel, renderConnect } from './companion/panel.js';
+import { mountPanel, renderConnect } from './companion/panel.js';
+import { applyTheme, store } from './prefs.js';
+import { DEMO_CONVERSATION, demoCall, demoSnapshot } from './demo-comms.js';
 
 const invoke = (cmd, args) => window.__TAURI__.core.invoke(cmd, args);
+const listen = (name, run) => { try { return window.__TAURI__.event?.listen(name, run)?.catch?.(() => {}); } catch { return null; } };
 const root = document.getElementById('app');
-const store = {
-  get(key, fallback) { try { return JSON.parse(localStorage.getItem(`pulse.${key}`) ?? 'null') ?? fallback; } catch { return fallback; } },
-  set(key, value) { try { localStorage.setItem(`pulse.${key}`, JSON.stringify(value)); } catch { /* the choice lasts this session */ } },
-};
 const state = {
   session: null, payload: null, offset: 0, demo: null, screen: 'day', busy: false, status: null, celebrate: false,
   connect: { phase: 'start' }, prefs: prefsWith(store.get('prefs', {})), mode: store.get('mode', null), queue: store.get('queue', []),
-  shown: new Set(store.get('shown', [])), info: { version: '', shortcut: 'Ctrl+Alt+P' }, autostart: false, lastTray: '', pollTimer: null,
+  shown: new Set(store.get('shown', [])), info: { version: '', shortcut: 'Ctrl+Alt+P' }, lastTray: '', pollTimer: null,
 };
+applyTheme();
 const communications = mountCommunications(root, {
-  call: (path,body) => invoke('companion_request',{path,body:body??null}),
-  onEnablePings:()=>void invoke('companion_ping_enable').then(()=>communications.status('Laptop pings enabled. Check OS Focus or Do not disturb if a banner is missing.')).catch(e=>communications.status(String(e))),
-  onOpen: (path) => void invoke('open_pulse',{path}),onSwitch:()=>void signOut(),onResize:fit,isVisible:()=>state.panelVisible!==false&&document.visibilityState==='visible',
+  call: (path, body) => state.demo ? demoCall(path, body) : invoke('companion_request', { path, body: body ?? null }).catch((e) => { throw failure(e); }),
+  onFixPings: () => void invoke('companion_ping_fix').then((r) => { communications.pingIssue(r?.ok ? null : r?.message ?? null); if (r?.ok) communications.status('Pings are on.'); }).catch((e) => communications.status(failure(e).message)),
+  onOpen: (href) => void invoke('open_pulse', { path: href }), onSwitch: () => void signOut(), onResize: fit,
+  isVisible: () => state.panelVisible !== false && document.visibilityState === 'visible', store,
+  tools: [
+    { id: 'app', label: 'Open the Pulse window', icon: 'window', onClick: () => void invoke('open_app', { path: null }) },
+    { id: 'settings', label: 'Settings', icon: 'settings', onClick: () => void invoke('open_settings', { section: null }) },
+    { id: 'hide', label: 'Hide', icon: 'hide', onClick: () => void invoke('panel_hide') },
+  ],
 });
 const panel = mountPanel(communications.todayHost, {
   onAction: (id) => void act(id),
   onMode: (mode) => { state.mode = mode; store.set('mode', mode); render(); },
   onOpen: (href) => void invoke('open_pulse', { path: href }),
-  onTool: (tool) => { if (tool === 'settings') { state.screen = 'settings'; render(); } else void invoke('panel_hide'); },
+  onTool: () => {},
 });
 
 const updateContext = () => ({ signedIn: !!state.session?.signedIn, demo: !!state.demo, busy: state.busy || state.installing, pending: state.queue.length > 0 || state.syncing, payload: state.payload });
@@ -58,43 +65,41 @@ const client = () => state.demo ?? {
 function fit() {
   requestAnimationFrame(() => { const h = Math.ceil(root.getBoundingClientRect().height); if (h > 0) void invoke('panel_fit', { height: h }).catch(() => {}); });
 }
+function card(title, text, live = true) {
+  const node = Object.assign(document.createElement('section'), { className: 'pc pc-notice' });
+  if (live) { node.setAttribute('role', 'status'); node.setAttribute('aria-live', 'polite'); }
+  node.append(Object.assign(document.createElement('h2'), { className: 'pc-title', textContent: title }), Object.assign(document.createElement('p'), { className: 'pc-sub', textContent: text }));
+  return node;
+}
 function render() {
   if (state.session?.restoring) {
-    const card = Object.assign(document.createElement('section'), { className: 'settings' });
-    card.setAttribute('role', 'status'); card.setAttribute('aria-live', 'polite');
-    card.append(Object.assign(document.createElement('h2'), { textContent: 'Restoring your saved sign-in…' }));
-    card.append(Object.assign(document.createElement('p'), { textContent: 'Your account stays protected. macOS may ask for Keychain access; allow Pulse in that system prompt to continue.' }));
-    root.replaceChildren(card);
+    root.replaceChildren(card('Opening your saved sign-in…', 'Your account stays protected on this computer. This takes a moment.'));
   } else if (state.screen === 'connect') {
     renderConnect(root, { ...state.connect, still: !state.prefs.mascot }, connectHandlers);
     const foot = document.createElement('div');
     foot.className = 'connect-foot';
     foot.append(Object.assign(document.createElement('span'), { textContent: new URL(state.session?.base ?? 'https://pulse.estateautopilots.com').host }));
     const settings = Object.assign(document.createElement('button'), { type: 'button', textContent: 'Settings' });
-    settings.addEventListener('click', () => { state.screen = 'settings'; render(); });
+    settings.addEventListener('click', () => void invoke('open_settings', { section: null }));
     foot.append(settings);
     root.append(foot);
     if (!state.prefs.mascot) root.querySelector('.pc-pip')?.remove();
-  } else if (state.screen === 'settings') renderSettings();
-  else {
+  } else {
     const p = state.queue.length && state.payload ? projected(state.payload, state.queue) : state.payload;
     communications.attach();
     panel.reset();
     panel.render(deriveView(p, now(), { celebrate: state.celebrate }), {
       busy: state.busy || state.installing, status: state.status?.text ?? (state.demo ? 'Demo · nothing is saved' : state.queue.length ? `${state.queue.length} saved on this computer · will sync` : undefined),
-      statusTone: state.status?.tone, mode: state.mode ?? p?.shift?.mode ?? 'office', showPip: state.prefs.mascot,
-      tools: [{ id: 'settings', label: 'Settings', icon: 'settings' }, { id: 'close', label: `Hide (${state.info.shortcut})`, icon: 'close' }],
+      statusTone: state.status?.tone, mode: state.mode ?? p?.shift?.mode ?? 'office', showPip: state.prefs.mascot, openLabel: 'Open My desk',
     });
   }
   updateUi();
 }
 function updateUi() {
   root.querySelector('.pc-update')?.remove();
-  const status = root.querySelector('[data-update-status]'); if (status) status.textContent = updates.status || 'Pulse checks every four hours.';
-  const check = root.querySelector('[data-update-check]'); if (check) check.disabled = updates.running || !!state.demo;
   const update = updates.offer(updateContext());
   if (update) {
-    updateCard(state.screen === 'settings' ? root.firstElementChild : root, { update, showPip: state.prefs.mascot, onInstall: () => void installUpdate(), onLater: () => { updates.later(); store.set('updateLater', updates.laterUntil); } });
+    updateCard(root, { update, showPip: state.prefs.mascot, onInstall: () => void installUpdate(), onLater: () => { updates.later(); store.set('updateLater', updates.laterUntil); } });
     const announcement = `${store.get('updateChannel', 'test')}:${update.version}:${updates.laterUntil}`;
     if (store.get('updateAnnounced', '') !== announcement) { store.set('updateAnnounced', announcement); void invoke('panel_show').catch(() => {}); }
   }
@@ -104,76 +109,6 @@ function tick() {
   if (state.screen !== 'day' || !state.payload) return;
   const p = state.queue.length ? projected(state.payload, state.queue) : state.payload;
   panel.tick(deriveView(p, now(), { celebrate: state.celebrate }));
-}
-
-function renderSettings() {
-  const wrap = document.createElement('section');
-  wrap.className = 'settings';
-  wrap.setAttribute('aria-label', 'Pulse settings');
-  const head = document.createElement('header');
-  const title = Object.assign(document.createElement('h2'), { textContent: 'Settings' });
-  const back = document.createElement('button');
-  back.type = 'button'; back.className = 'pc-tool'; back.setAttribute('aria-label', 'Back'); back.innerHTML = icon('close');
-  back.addEventListener('click', () => { state.screen = state.session?.signedIn || state.demo ? 'day' : 'connect'; render(); });
-  head.append(title, back);
-  wrap.append(head);
-  const section = (text) => wrap.append(Object.assign(document.createElement('h3'), { textContent: text }));
-  const toggle = (label, hint, checked, onChange) => {
-    const row = document.createElement('label'); row.className = 'row';
-    const text = document.createElement('span'); text.textContent = label;
-    if (hint) { text.append(document.createElement('br'), Object.assign(document.createElement('small'), { textContent: hint })); }
-    const input = Object.assign(document.createElement('input'), { type: 'checkbox', checked });
-    input.addEventListener('change', () => onChange(input.checked));
-    row.append(text, input);
-    wrap.append(row);
-  };
-  const setPref = (key, value) => { state.prefs = prefsWith({ ...state.prefs, [key]: value }); store.set('prefs', state.prefs); };
-  section('Updates');
-  const check = Object.assign(document.createElement('button'), { type: 'button', className: 'pc-btn', textContent: 'Check for updates', disabled: updates.running || !!state.demo });
-  check.dataset.updateCheck = '';
-  check.addEventListener('click', () => void updates.poll(updateContext(), true));
-  const updateStatus = Object.assign(document.createElement('p'), { className: 'muted', textContent: updates.status }); updateStatus.dataset.updateStatus = '';
-  wrap.append(check, updateStatus);
-  const select = document.createElement('select'); select.setAttribute('aria-label', 'Update channel');
-  for (const value of ['test', 'stable']) select.append(Object.assign(document.createElement('option'), { value, textContent: value === 'test' ? 'Test updates' : 'Stable updates' }));
-  select.value = store.get('updateChannel', 'test');
-  select.addEventListener('change', () => { store.set('updateChannel', select.value); updates.reset(); void updates.poll(updateContext(), true); });
-  wrap.append(select);
-  section('Reminders');
-  toggle('Check in when my shift starts', null, state.prefs.checkIn, (v) => setPref('checkIn', v));
-  toggle('Back from a break', `After ${state.prefs.breakMinutes} minutes away`, state.prefs.breakBack, (v) => setPref('breakBack', v));
-  const minutes = document.createElement('label'); minutes.className = 'row';
-  minutes.append(Object.assign(document.createElement('span'), { textContent: 'Break reminder after (minutes)' }));
-  const m = Object.assign(document.createElement('input'), { type: 'number', min: 5, max: 180, step: 5, value: state.prefs.breakMinutes });
-  m.addEventListener('change', () => setPref('breakMinutes', Number(m.value) || 30));
-  minutes.append(m); wrap.append(minutes);
-  toggle('Check out when my shift ends', null, state.prefs.checkOut, (v) => setPref('checkOut', v));
-  section('This computer');
-  toggle('Slide the panel up when my workday starts', null, state.prefs.popAtStart, (v) => setPref('popAtStart', v));
-  toggle('Open Pulse when I sign in to the computer', 'Off unless you turn it on', state.autostart, (v) => { void invoke('autostart_set', { enabled: v }).then((on) => { state.autostart = on; }).catch((e) => { state.status = { text: failure(e).message, tone: 'warning' }; }); });
-  toggle('Show Pip, the Pulse bot', 'Calm still poses when your system asks for less motion', state.prefs.mascot, (v) => { setPref('mascot', v); });
-  section('Privacy');
-  const privacy = document.createElement('p'); privacy.className = 'muted';
-  privacy.textContent = 'Optional activity details (focus and idle time) are off. They start only if you accept the published notice.';
-  const open = Object.assign(document.createElement('button'), { type: 'button', className: 'pc-link', textContent: 'Settings & privacy…' });
-  open.addEventListener('click', () => void invoke('open_privacy'));
-  wrap.append(privacy, open);
-  section('Account');
-  if (state.session?.signedIn) {
-    const who = Object.assign(document.createElement('p'), { className: 'muted', textContent: `Signed in as ${state.session.personName || 'you'} on ${new URL(state.session.base).host}. Sign this computer out here, in Settings → Devices or Account / Security.` });
-    const out = Object.assign(document.createElement('button'), { type: 'button', className: 'pc-btn', textContent: 'Sign out of this computer', disabled: !!state.installing });
-    out.addEventListener('click', () => void signOut());
-    wrap.append(who, out);
-  } else if (state.developer) {
-    const label = document.createElement('label'); label.className = 'pc-field'; label.textContent = 'Developer server';
-    const base = Object.assign(document.createElement('input'), { type: 'url', value: state.session?.base ?? '', spellcheck: false });
-    base.addEventListener('change', () => { state.session = { ...(state.session ?? {}), base: base.value.trim() }; });
-    label.append(base); wrap.append(label);
-  }
-  const version = Object.assign(document.createElement('p'), { className: 'muted', textContent: `Pulse ${state.info.version} · open or hide with ${state.info.shortcut}` });
-  let taps = 0; version.addEventListener('click', () => { if (++taps === 7) { state.developer = true; renderSettings(); } });
-  wrap.append(version);
-  root.replaceChildren(wrap);
 }
 
 // ---------------------------------------------------------------------------------------------------- data
@@ -252,7 +187,7 @@ const connectHandlers = {
   async onPair() {
     state.connect = { phase: 'start', busy: true, message: 'Opening Pulse in your browser…' }; render();
     try {
-      const started = await invoke('companion_pair_start', { expectedPerson:store.get('expectedPerson',null), base: state.session?.base ?? 'https://pulse.estateautopilots.com/api/native/v0' });
+      const started = await invoke('companion_pair_start', { expectedPerson: store.get('expectedPerson', null), base: state.session?.base ?? 'https://pulse.estateautopilots.com/api/native/v0' });
       state.connect = { phase: 'code', code: started.code, url: started.verifyUrl, message: 'Waiting for your approval…' }; render();
       clearInterval(state.pollTimer);
       const deadline = Date.now() + (started.expiresIn ?? 600) * 1000;
@@ -266,7 +201,7 @@ const connectHandlers = {
       }, Math.max(2, started.interval ?? 3) * 1000);
     } catch (e) { const f = failure(e); state.connect = { phase: f.gate ? 'gate' : 'error', message: f.message }; render(); }
   },
-  onOpenUrl() { if (state.connect.code) void invoke('open_pulse', { path: `/connect?code=${state.connect.code}` }); },
+  onOpenUrl() { if (state.connect.code) void invoke('open_in_browser', { path: `/connect?code=${state.connect.code}` }); },
   onCancel() { clearInterval(state.pollTimer); void invoke('companion_pair_cancel'); state.connect = { phase: 'start' }; render(); },
   onPasswordStart() { state.connect = { phase: 'password' }; render(); root.querySelector('input')?.focus(); },
   async onPassword({ username, password, code }) {
@@ -277,7 +212,7 @@ const connectHandlers = {
       await signedIn(r);
     } catch (e) { const f = failure(e); state.connect = { phase: f.gate ? 'gate' : 'password', twoStep: state.connect.twoStep, message: f.message }; render(); }
   },
-  onDemo() { state.demo = demoClient('out'); state.screen = 'day'; void refresh();void communications.refresh(); },
+  onDemo() { state.demo = demoClient('out'); state.screen = 'day'; communications.snapshot(demoSnapshot()); void refresh(); },
 };
 async function signedIn(session) {
   updates.reset();
@@ -296,31 +231,59 @@ async function signOut() {
 
 // ---------------------------------------------------------------------------------------------------- start
 window.pulsePanel = {
-  hidden(){state.panelVisible=false;},
-  shown() {state.panelVisible=true;root.firstElementChild?.classList.remove('pc-enter'); void root.offsetWidth; root.firstElementChild?.classList.add('pc-enter'); void refresh();void communications.refresh(); },
+  hidden() { state.panelVisible = false; },
+  shown() { state.panelVisible = true; root.firstElementChild?.classList.remove('pc-enter'); void root.offsetWidth; root.firstElementChild?.classList.add('pc-enter'); void refresh(); void communications.refresh(); },
 };
 document.addEventListener('keydown', (e) => { if (e.key === 'Escape') void invoke('panel_hide'); });
+const inboxTick = async () => {
+  if (!state.session?.signedIn || state.demo) return;
+  try {
+    const s = await invoke('companion_ping_state');
+    state.panelVisible = s.panelVisible;
+    if (s.snapshot) { communications.snapshot(s.snapshot); if (s.snapshot.person?.id) store.set('expectedPerson', s.snapshot.person.id); }
+    communications.pingIssue(s.pingIssue ?? null);
+  } catch { /* native status unavailable */ }
+};
 async function boot() {
   try { state.info = await invoke('app_info'); } catch { /* defaults */ }
-  try { state.autostart = await invoke('autostart_get'); } catch { /* unsupported */ }
+  const launch = state.info.launch ?? {};
+  if (launch.theme) document.documentElement.dataset.theme = launch.theme;
   state.session = await invoke('companion_session');
   state.screen = state.session.signedIn ? 'day' : 'connect';
+  if (!state.session.signedIn && state.session.notice) state.connect = { phase: 'start', message: state.session.notice };
   render();
-  // A rendered, protected session-loading screen is healthy while the OS asks for Keychain approval.
-  // Secure-store loading starts after this acknowledgement and never bypasses OS permissions.
+  // A rendered, protected session-loading screen is healthy while saved credentials are restored.
   await invoke('update_healthy').catch(() => {});
-  if (state.session.restoring) void finishSessionRestore();
-  await refresh();
-  if(window.__TAURI__.event)await window.__TAURI__.event.listen('pulse:open-conversation',({payload})=>{
-    state.screen=state.session?.signedIn?'day':'connect';if(payload.error&&!state.session?.signedIn)state.connect={phase:'start',message:payload.error};render();if(payload.channelId)communications.open(payload.channelId,payload.href);else if(payload.notificationId)communications.showInbox();if(payload.error)communications.status(payload.error);
-  });
-  const inboxTick=async()=>{if(!state.session?.signedIn||state.demo)return;try{const s=await invoke('companion_ping_state');state.panelVisible=s.panelVisible;if(s.snapshot){communications.snapshot(s.snapshot);if(s.snapshot.person?.id)store.set('expectedPerson',s.snapshot.person.id);}if(s.error)communications.status(s.error);}catch{/* native status unavailable */}};
-  void inboxTick();setInterval(()=>void inboxTick(),2500);
-  void updates.poll(updateContext());
-  setInterval(() => { void updates.poll(updateContext()); updateUi(); }, 60000);
+  // Timers start before any network call, so one slow or failing request can never stop the clock or pings.
   setInterval(tick, 1000);
+  setInterval(() => void inboxTick(), 2500);
   setInterval(() => { tray(); remind(); }, 30000);
   setInterval(() => void refresh(), 120000);
+  setInterval(() => { void updates.poll(updateContext()); updateUi(); }, 60000);
+  void listen('pulse:open-conversation', ({ payload }) => {
+    state.screen = state.session?.signedIn ? 'day' : 'connect'; if (payload.error && !state.session?.signedIn) state.connect = { phase: 'start', message: payload.error };
+    render(); if (payload.channelId) communications.open(payload.channelId, payload.href); else if (payload.notificationId) communications.showInbox(); if (payload.error) communications.status(payload.error);
+  });
+  void listen('pulse:prefs', () => { state.prefs = prefsWith(store.get('prefs', {})); applyTheme(); panel.reset(); render(); });
+  void listen('pulse:signed-in', async () => { const s = await invoke('companion_session'); if (s.signedIn && !state.session?.signedIn) await signedIn(s); });
+  void listen('pulse:signed-out', async () => { state.session = await invoke('companion_session'); if (!state.session.signedIn) { state.payload = null; state.screen = 'connect'; render(); tray(); } });
+  void listen('pulse:presence', () => void refresh());
+  void listen('pulse:install-update', () => void installUpdate());
+  void listen('pulse:check-updates', () => void updates.poll(updateContext(), true));
+  if (state.session.restoring) void finishSessionRestore();
+  // --demo (runner screenshots, demos): synthetic day, inbox and chats on a chosen tab.
+  if (launch.demo) {
+    state.demo = demoClient('in'); state.screen = 'day'; state.panelVisible = true;
+    communications.snapshot(demoSnapshot());
+    await refresh();
+    if (launch.tab === 'inbox') communications.showInbox();
+    else if (launch.tab === 'chats') communications.showChats();
+    else if (launch.tab === 'conversation') communications.open(DEMO_CONVERSATION);
+    return;
+  }
+  void inboxTick();
+  await refresh();
+  void updates.poll(updateContext());
 }
 
 async function finishSessionRestore() {
@@ -330,6 +293,7 @@ async function finishSessionRestore() {
     if (session.restoring) { setTimeout(() => void finishSessionRestore(), 1000); return; }
     updates.reset(); updates.laterUntil = store.get('updateLater', 0);
     state.session = session; state.screen = session.signedIn ? 'day' : 'connect';
+    if (!session.signedIn && session.notice) state.connect = { phase: 'start', message: session.notice };
     render(); await refresh(); void updates.poll(updateContext());
   } catch { if (state.session?.restoring) setTimeout(() => void finishSessionRestore(), 1000); }
 }

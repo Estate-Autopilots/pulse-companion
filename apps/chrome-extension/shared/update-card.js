@@ -6,8 +6,8 @@ export function updateCard(root, { update, installLabel = 'Install and restart',
   if (showPip) card.append(pip);
   card.append(text);
   if (hint) card.append(Object.assign(document.createElement('p'), { className: 'muted', textContent: hint }));
-  for (const [label, handler] of [[installLabel, onInstall], ['Later', onLater]]) {
-    const b = Object.assign(document.createElement('button'), { type: 'button', className: 'pc-btn', textContent: label, disabled: busy });
+  for (const [label, handler, primary] of [[installLabel, onInstall, true], ['Later', onLater, false]]) {
+    const b = Object.assign(document.createElement('button'), { type: 'button', className: primary ? 'pc-btn pc-primary' : 'pc-btn', textContent: label, disabled: busy });
     b.addEventListener('click', handler); card.append(b);
   }
   root.append(card);

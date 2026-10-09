@@ -1,6 +1,6 @@
 {
   "name": "@pulse/companion",
-  "version": "0.3.4",
+  "version": "1.0.0",
   "private": true,
   "type": "module",
   "description": "Pulse Companion core shared by the web widget, desktop panel, Chrome popup and phone app: check-in view model, reminders, presence decisions, offline queue, gateway client and the Pip mascot.",

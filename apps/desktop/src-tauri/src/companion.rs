@@ -5,7 +5,7 @@ use reqwest::blocking::Client;
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 use std::{sync::Mutex, time::Duration};
-use pulse_desktop_core::startup::DeferredCredentials;
+use pulse_desktop_core::startup::{restore_choice, DeferredCredentials, Lookup};
 
 pub const DEFAULT_BASE: &str = "https://pulse.estateautopilots.com/api/native/v0";
 const SERVICE: &str = "com.pulse.work";
@@ -49,24 +49,65 @@ pub struct Companion {
     refresh: Mutex<()>,
     pairing: Mutex<Option<Pairing>>,
     two_step: Mutex<Option<TwoStep>>,
+    notice: Mutex<Option<&'static str>>,
 }
 
+// The OS credential store keeps the device credential. macOS ties a Keychain item to the signing identity that
+// created it, so builds signed with Pulse's stable identity use their own entry; an older build's entry is moved
+// over when it can be read silently. Restoring never shows a Keychain password prompt (see lib.rs quiet_keychain).
+#[cfg(target_os = "macos")]
+const CURRENT: &str = "companion-device-v2";
+#[cfg(windows)]
+const CURRENT: &str = ENTRY;
+
 #[cfg(any(windows, target_os = "macos"))]
-fn load_tokens() -> Option<Tokens> {
-    let secret = keyring::Entry::new(SERVICE, ENTRY).ok()?.get_password().ok()?;
-    serde_json::from_str(&secret).ok()
+fn lookup(entry: &str) -> Lookup<Tokens> {
+    match keyring::Entry::new(SERVICE, entry).map(|e| e.get_password()) {
+        Ok(Ok(secret)) => serde_json::from_str(&secret).map(Lookup::Found).unwrap_or(Lookup::Missing),
+        Ok(Err(keyring::Error::NoEntry)) => Lookup::Missing,
+        _ => Lookup::Unreadable,
+    }
+}
+#[cfg(any(windows, target_os = "macos"))]
+fn load_tokens() -> (Option<Tokens>, Option<&'static str>) {
+    let (tokens, migrate, notice) = restore_choice(lookup(CURRENT), || if CURRENT == ENTRY { Lookup::Missing } else { lookup(ENTRY) });
+    if migrate { if let Some(t) = &tokens { let _ = save_tokens(t); } }
+    (tokens, notice)
 }
 #[cfg(any(windows, target_os = "macos"))]
 fn save_tokens(t: &Tokens) -> Result<(), CallError> {
-    keyring::Entry::new(SERVICE, ENTRY)
+    keyring::Entry::new(SERVICE, CURRENT)
         .and_then(|e| e.set_password(&serde_json::to_string(t).unwrap_or_default()))
         .map_err(|_| CallError::status(0, "This computer’s credential store refused to keep the Pulse sign-in"))
 }
 #[cfg(any(windows, target_os = "macos"))]
-fn forget_tokens() { if let Ok(e) = keyring::Entry::new(SERVICE, ENTRY) { let _ = e.delete_credential(); } }
+fn forget_tokens() {
+    for entry in [CURRENT, ENTRY] { if let Ok(e) = keyring::Entry::new(SERVICE, entry) { let _ = e.delete_credential(); } }
+}
+/// Hosted proof that an updated build reads the saved sign-in without a Keychain prompt (see acceptance.rs).
+pub fn keychain_acceptance(op: &str) -> Value {
+    let synthetic = Tokens { base: "https://acceptance.invalid/api/native/v0".into(), access_token: "a".repeat(43), refresh_token: "r".repeat(43), device_id: "00000000-0000-4000-8000-000000000000".into(), person_name: "Acceptance runner".into() };
+    match op {
+        "write" => json!({"stored": save_tokens(&synthetic).is_ok()}),
+        "read" => {
+            #[cfg(target_os = "macos")]
+            let quiet = security_framework::os::macos::keychain::SecKeychain::disable_user_interaction().ok();
+            #[cfg(any(windows, target_os = "macos"))]
+            let found = match lookup(CURRENT) { Lookup::Found(t) => if t.device_id == synthetic.device_id { "found" } else { "other" }, Lookup::Missing => "missing", Lookup::Unreadable => "unreadable" };
+            #[cfg(not(any(windows, target_os = "macos")))]
+            let found = "unsupported";
+            #[cfg(target_os = "macos")]
+            drop(quiet);
+            json!({"read": found, "promptsDisabled": cfg!(target_os = "macos")})
+        }
+        "clear" => { forget_tokens(); json!({"cleared": true}) }
+        _ => json!({"error": "unknown operation"}),
+    }
+}
+
 // Other systems keep the credential for this run only.
 #[cfg(not(any(windows, target_os = "macos")))]
-fn load_tokens() -> Option<Tokens> { None }
+fn load_tokens() -> (Option<Tokens>, Option<&'static str>) { (None, None) }
 #[cfg(not(any(windows, target_os = "macos")))]
 fn save_tokens(_t: &Tokens) -> Result<(), CallError> { Ok(()) }
 #[cfg(not(any(windows, target_os = "macos")))]
@@ -107,16 +148,20 @@ impl Companion {
             .user_agent(format!("PulseCompanion/{} ({})", env!("CARGO_PKG_VERSION"), platform()))
             .build()
             .expect("HTTP client");
-        Self { client, tokens: DeferredCredentials::default(), refresh: Mutex::new(()), pairing: Mutex::new(None), two_step: Mutex::new(None) }
+        Self { client, tokens: DeferredCredentials::default(), refresh: Mutex::new(()), pairing: Mutex::new(None), two_step: Mutex::new(None), notice: Mutex::new(None) }
     }
 
-    pub fn restore_saved_session(&self) { self.tokens.finish_restore(load_tokens()); }
+    pub fn restore_saved_session(&self) {
+        let (tokens, notice) = load_tokens();
+        *self.notice.lock().unwrap() = notice;
+        self.tokens.finish_restore(tokens);
+    }
 
     pub fn session(&self) -> Value {
         if self.tokens.is_restoring() { return json!({"signedIn":false,"restoring":true,"base":DEFAULT_BASE,"site":site(DEFAULT_BASE)}); }
         match self.tokens.lock().unwrap().as_ref() {
             Some(t) => json!({"signedIn": true, "base": t.base, "site": site(&t.base), "personName": t.person_name, "deviceId": t.device_id}),
-            None => json!({"signedIn": false, "base": DEFAULT_BASE, "site": site(DEFAULT_BASE)}),
+            None => json!({"signedIn": false, "base": DEFAULT_BASE, "site": site(DEFAULT_BASE), "notice": *self.notice.lock().unwrap()}),
         }
     }
     pub fn base(&self) -> String { self.tokens.lock().unwrap().as_ref().map(|t| t.base.clone()).unwrap_or_else(|| DEFAULT_BASE.into()) }
@@ -171,6 +216,7 @@ impl Companion {
         Ok(next)
     }
     fn store(&self, t: Tokens) -> Result<Value, CallError> {
+        *self.notice.lock().unwrap() = None;
         let mut live=self.tokens.lock().unwrap();
         self.tokens.invalidate_restore();
         save_tokens(&t)?;

@@ -3249,12 +3249,13 @@ dependencies = [
 
 [[package]]
 name = "pulse-desktop"
-version = "0.3.4"
+version = "1.0.0"
 dependencies = [
  "keyring",
  "mac-usernotifications",
  "pulse-desktop-core",
  "reqwest 0.12.28",
+ "security-framework 3.7.0",
  "serde",
  "serde_json",
  "tauri",
