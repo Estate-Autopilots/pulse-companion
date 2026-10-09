@@ -25,6 +25,8 @@ diagnostics() {
   if [ "$result" != 0 ]; then
     adb logcat -d -b crash > "$OUT/crash.txt" 2>/dev/null || true
     adb logcat -d -s Capacitor AndroidRuntime chromium > "$OUT/webview.txt" 2>/dev/null || true
+    adb logcat -d -s libc DEBUG ActivityManager OpenGLRenderer > "$OUT/native-runtime.txt" 2>/dev/null || true
+    adb shell dumpsys activity exit-info "$PKG" > "$OUT/exit-info.txt" 2>/dev/null || true
     adb shell dumpsys activity activities > "$OUT/activities.txt" 2>/dev/null || true
     shot failure || true
   fi

@@ -128,7 +128,9 @@ jobs:
           heap-size: 512M
           disk-size: 6000M
           emulator-boot-timeout: 900
-          emulator-options: -no-window -gpu swiftshader_indirect -noaudio -no-boot-anim -no-snapshot
+          # Current emulator releases deprecate swiftshader_indirect. GLES software rendering avoids Chromium's
+          # Vulkan compatibility failures on the headless runner (Android's emulator troubleshooting guidance).
+          emulator-options: -no-window -gpu swiftshader -feature -Vulkan -noaudio -no-boot-anim -no-snapshot
           disable-animations: true
           script: bash apps/mobile/scripts/android-acceptance.sh "apk/Pulse-${{ needs.prepare.outputs.version }}-android.apk" "${{ !inputs.validation_only && 'old/Pulse-1.0.0-android.apk' || '' }}" screens
       - uses: actions/upload-artifact@v7
