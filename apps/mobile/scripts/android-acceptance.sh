@@ -15,6 +15,9 @@ PKG=com.pulse.work.mobile
 # The sign-in form itself (its Username field), not merely a page that mentions signing in.
 SIGNIN=${PULSE_SIGNIN_TEXT:-Username}
 ACT=$PKG/.MainActivity
+# A lost emulator must fail with diagnostics instead of hanging an entire hosted job in adb.
+ADB_BIN=$(command -v adb)
+adb() { local limit=45; [ "${1:-}" != install ] || limit=180; timeout "$limit" "$ADB_BIN" "$@"; }
 mkdir -p "$OUT"
 : > "$OUT/acceptance.txt"
 diagnostics() {
@@ -29,9 +32,9 @@ diagnostics() {
 trap diagnostics EXIT
 
 # The emulator can drop off adb for a moment under load: every phase starts by waiting for it to be fully booted.
-ready() { adb wait-for-device; until [ "$(adb shell getprop sys.boot_completed 2>/dev/null | tr -d '\r')" = 1 ]; do sleep 2; done; }
+ready() { adb wait-for-device; local end=$((SECONDS + 180)); until [ "$(adb shell getprop sys.boot_completed 2>/dev/null | tr -d '\r')" = 1 ]; do (( SECONDS < end )) || { echo "Emulator did not recover" >&2; return 1; }; sleep 2; done; }
 shot() { adb exec-out screencap -p > "$OUT/$1.png"; }
-dump() { adb shell uiautomator dump /sdcard/pulse-ui.xml >/dev/null 2>&1 || true; adb shell cat /sdcard/pulse-ui.xml 2>/dev/null || true; }
+dump() { if adb shell uiautomator dump /sdcard/pulse-ui.xml >/dev/null 2>&1; then adb shell cat /sdcard/pulse-ui.xml 2>/dev/null || true; fi; }
 # Wait until the screen (including the page inside the WebView) shows text matching a pattern.
 wait_text() {
   local end=$((SECONDS + $2))
