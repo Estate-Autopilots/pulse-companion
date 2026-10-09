@@ -7,6 +7,7 @@ pub mod tracker;
 pub mod startup;
 pub mod wifi;
 pub mod mac_keychain;
+pub mod navigation;
 use base64::{
     engine::general_purpose::{STANDARD, URL_SAFE_NO_PAD},
     Engine,

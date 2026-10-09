@@ -24,39 +24,14 @@ const EXCHANGE_PAUSE: Duration = Duration::from_secs(600);
 #[derive(Default)]
 pub struct AppWindow {
     exchanging: AtomicBool,
-    last_exchange: Mutex<Option<Instant>>,
+    last_exchange: Mutex<Option<(String, Instant)>>,
+    cookie_device: Mutex<Option<String>>,
 }
 
 #[derive(Serialize, Deserialize, Clone, Copy, Debug, PartialEq)]
 pub struct Geometry { pub x: i32, pub y: i32, pub width: u32, pub height: u32, #[serde(default)] pub maximized: bool }
 
-/// Only plain Pulse paths open in the window: "/chats?channel=…", never "//host" or a scheme.
-pub fn safe_path(path: &str) -> Option<String> {
-    let path = path.trim();
-    let ok = path.starts_with('/') && !path.starts_with("//") && path.len() <= 600
-        && path.chars().all(|c| c.is_ascii_alphanumeric() || "/-_.~?=&%:+,#".contains(c));
-    ok.then(|| path.to_string())
-}
-
-/// pulse://chats?channel=… → "/chats?channel=…"; pulse://settings/notifications → Settings; pulse://panel → panel.
-#[derive(Debug, PartialEq)]
-pub enum Link { Page(String), Settings(Option<String>), Panel }
-pub fn parse_link(raw: &str) -> Option<Link> {
-    let url = url::Url::parse(raw).ok()?;
-    if url.scheme() != "pulse" { return None; }
-    let host = url.host_str().unwrap_or("");
-    let rest = url.path().trim_matches('/');
-    match host {
-        "settings" => Some(Link::Settings((!rest.is_empty()).then(|| rest.chars().filter(|c| c.is_ascii_alphanumeric() || *c == '-').take(32).collect()))),
-        "panel" => Some(Link::Panel),
-        "" | "open" | "home" if rest.is_empty() => Some(Link::Page("/".into())),
-        _ => {
-            let base = if host == "open" { format!("/{rest}") } else if rest.is_empty() { format!("/{host}") } else { format!("/{host}/{rest}") };
-            let full = match url.query() { Some(q) => format!("{base}?{q}"), None => base };
-            safe_path(&full).map(Link::Page)
-        }
-    }
-}
+pub use pulse_desktop_core::navigation::{parse_link, safe_path, Link};
 
 /// A saved window rectangle is used only if it is still mostly on a connected screen.
 pub fn usable(g: &Geometry, screens: &[(i32, i32, u32, u32)]) -> bool {
@@ -209,9 +184,15 @@ pub fn go(app: &AppHandle, path: String) {
         let site = site(&app);
         if !reachable(&site) { local(&app, "offline", None); return; }
         let Some(win) = window(&app) else { return };
-        let has_cookie = win.cookies_for_url(site.clone()).map(|c| c.iter().any(|c| c.name() == COOKIE && !c.value().is_empty())).unwrap_or(false);
+        // Browser cookies can outlive the pairing. Establish ownership on this start rather than
+        // treating any old web cookie as the current computer's sign-in.
+        let owns_cookie = paired_with(&session, app.state::<AppWindow>().cookie_device.lock().unwrap().as_deref().unwrap_or(""), &site);
+        let has_cookie = owns_cookie && win.cookies_for_url(site.clone()).map(|c| c.iter().any(|c| c.name() == COOKIE && !c.value().is_empty())).unwrap_or(false);
         if !has_cookie {
             if let Err(message) = exchange(&app, &win, &site) { local(&app, "error", Some(&message)); return; }
+        }
+        if !paired_with(&companion.session(), session["deviceId"].as_str().unwrap_or(""), &site) {
+            local(&app, "error", Some("Your sign-in changed. Open Pulse again.")); return;
         }
         if let Ok(target) = site.join(&path) { let _ = win.navigate(target); }
     });
@@ -224,20 +205,38 @@ fn reachable(site: &url::Url) -> bool {
 }
 
 /// Device credential → a 30-day Pulse web session for this window only (revoked with the device).
+fn paired_with(session: &Value, device: &str, site: &url::Url) -> bool {
+    !device.is_empty() && session["signedIn"].as_bool() == Some(true)
+        && session["deviceId"].as_str() == Some(device)
+        && session["site"].as_str() == Some(site.origin().ascii_serialization().as_str())
+}
 fn exchange(app: &AppHandle, win: &WebviewWindow, site: &url::Url) -> Result<(), String> {
     let state = app.state::<AppWindow>();
     if state.exchanging.swap(true, Ordering::SeqCst) { return Err("Signing in…".into()); }
     let result = (|| {
-        let issued = app.state::<Companion>().request("native/web-session", Some(json!({}))).map_err(|e| {
+        let companion = app.state::<Companion>();
+        let session = companion.session();
+        let device = session["deviceId"].as_str().ok_or("Sign in to open Pulse.")?;
+        let changed = "Your sign-in changed. Open Pulse again.";
+        if !paired_with(&session, device, site) { return Err(changed.to_string()); }
+        let issued = companion.request_for_device(device, "native/web-session", Some(json!({}))).map_err(|e| {
             if e.signed_out { "This computer was signed out of Pulse. Sign in again.".to_string() } else if e.offline { "You’re offline.".to_string() } else { e.message.clone() }
         })?;
+        if !paired_with(&companion.session(), device, site) { return Err(changed.to_string()); }
         let token = issued["token"].as_str().filter(|t| t.len() == 43 && t.chars().all(|c| c.is_ascii_alphanumeric() || c == '-' || c == '_')).ok_or("Pulse could not open your workspace here. Try again.")?;
         let max_age = issued["maxAge"].as_i64().unwrap_or(2_592_000).clamp(3600, 2_592_000);
         let host = site.host_str().ok_or("Pulse address is invalid")?.to_string();
         let cookie = Cookie::build((COOKIE, token.to_string())).domain(host).path("/").secure(site.scheme() == "https").http_only(true)
             .same_site(tauri::webview::cookie::SameSite::Lax).max_age(tauri::webview::cookie::time::Duration::seconds(max_age)).build();
-        win.set_cookie(cookie).map_err(|_| "This window could not keep your Pulse sign-in.".to_string())?;
-        *state.last_exchange.lock().unwrap() = Some(Instant::now());
+        win.set_cookie(cookie.clone()).map_err(|_| "This window could not keep your Pulse sign-in.".to_string())?;
+        // Sign-out may clear cookies between the pre-write check and this OS call. No other
+        // exchange can write a new pairing's cookie while exchanging is true, so remove ours.
+        if !paired_with(&companion.session(), device, site) {
+            let _ = win.delete_cookie(cookie);
+            return Err(changed.to_string());
+        }
+        *state.cookie_device.lock().unwrap() = Some(device.to_string());
+        *state.last_exchange.lock().unwrap() = Some((device.to_string(), Instant::now()));
         Ok(())
     })();
     state.exchanging.store(false, Ordering::SeqCst);
@@ -251,8 +250,10 @@ fn navigation(app: &AppHandle, url: &url::Url) -> bool {
     if same_site(url, &origin) {
         // Landing on /login while this computer is paired: sign the window in again (expired or revoked cookie),
         // unless that just happened, which means the person chose to sign out of the window.
-        if url.path() == "/login" && app.state::<Companion>().session()["signedIn"].as_bool().unwrap_or(false) {
-            let recent = app.state::<AppWindow>().last_exchange.lock().unwrap().is_some_and(|t| t.elapsed() < EXCHANGE_PAUSE);
+        let session = app.state::<Companion>().session();
+        if url.path() == "/login" && session["signedIn"].as_bool().unwrap_or(false) {
+            let recent = app.state::<AppWindow>().last_exchange.lock().unwrap().as_ref()
+                .is_some_and(|(device, time)| session["deviceId"].as_str() == Some(device.as_str()) && time.elapsed() < EXCHANGE_PAUSE);
             if !recent {
                 let next = url.query_pairs().find(|(k, _)| k == "next").and_then(|(_, v)| safe_path(&v)).unwrap_or_else(|| "/".into());
                 let app = app.clone();
@@ -309,6 +310,7 @@ fn download(app: &AppHandle, event: DownloadEvent<'_>) -> bool {
 
 /// After signing this computer out: the window forgets its web session and shows the sign-in screen.
 pub fn signed_out(app: &AppHandle) {
+    *app.state::<AppWindow>().cookie_device.lock().unwrap() = None;
     let Some(win) = window(app) else { return };
     let site = site(app);
     if let Ok(cookies) = win.cookies_for_url(site.clone()) {
@@ -365,6 +367,16 @@ pub fn open_app(app: AppHandle, path: Option<String>) { open(&app, path); }
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn a_window_session_belongs_to_the_pairing_and_origin_that_requested_it() {
+        let site = url::Url::parse("https://pulse.example").unwrap();
+        let session = json!({"signedIn":true,"deviceId":"device-a","site":"https://pulse.example"});
+        assert!(paired_with(&session, "device-a", &site));
+        assert!(!paired_with(&session, "device-b", &site));
+        assert!(!paired_with(&session, "", &site));
+        assert!(!paired_with(&json!({"signedIn":false}), "device-a", &site));
+        assert!(!paired_with(&session, "device-a", &url::Url::parse("https://other.example").unwrap()));
+    }
     #[test]
     fn only_plain_pulse_paths_open() {
         assert_eq!(safe_path("/chats?channel=11111111-1111-4111-8111-111111111111").as_deref(), Some("/chats?channel=11111111-1111-4111-8111-111111111111"));
