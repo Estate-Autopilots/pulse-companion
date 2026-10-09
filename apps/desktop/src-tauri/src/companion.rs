@@ -207,6 +207,12 @@ impl Companion {
             None => json!({"signedIn": false, "base": DEFAULT_BASE, "site": site(DEFAULT_BASE), "notice": *self.notice.lock().unwrap()}),
         }
     }
+    /// Hosted installed-binary probe: public TLS/native admission, with no real credentials or pairing writes.
+    pub fn admission_acceptance(&self) -> Result<Value, String> {
+        let (read_status, _) = self.send(DEFAULT_BASE, "companion", None, None, None).map_err(|_| "Native admission unreachable")?;
+        let (refresh_status, _) = self.send(DEFAULT_BASE, "native/refresh", Some(&json!({"refreshToken":"Z".repeat(43)})), None, None).map_err(|_| "Refresh admission unreachable")?;
+        Ok(json!({"host":site(DEFAULT_BASE),"readDenied":read_status==401,"refreshDenied":refresh_status==401,"signedOutOnly":true,"pairingWrites":0,"attendanceWrites":0}))
+    }
     pub fn base(&self) -> String { self.tokens.lock().unwrap().as_ref().map(|t| t.base.clone()).unwrap_or_else(|| DEFAULT_BASE.into()) }
 
     fn send(&self, base: &str, path: &str, body: Option<&Value>, bearer: Option<&str>, session: Option<&str>) -> Result<(u16, Value), CallError> {
@@ -249,6 +255,8 @@ impl Companion {
         if current.access_token != used.access_token { return Ok(current); }
         let (status, data) = self.send(&current.base, "native/refresh", Some(&json!({"refreshToken": current.refresh_token})), None, None)?;
         if self.tokens.lock().unwrap().as_ref().map(|t|&t.device_id)!=Some(&current.device_id){return Err(self.changed_session());}
+        // A temporary gateway failure must preserve the single-use refresh credential for retry.
+        if status == 429 || status >= 500 { return Err(Self::fail(status, &data)); }
         let (Some(access), Some(refresh)) = (data["accessToken"].as_str(), data["refreshToken"].as_str()) else { self.clear_device(&current.device_id); return Err(CallError::signed_out()); };
         if status != 200 { self.clear_device(&current.device_id); return Err(CallError::signed_out()); }
         let next = Tokens { access_token: access.into(), refresh_token: refresh.into(), ..current.clone() };
@@ -369,6 +377,28 @@ mod tests {
         assert!(e.contains("\"gate\":true") && e.contains("front door"));
         assert!(CallError::offline().text().contains("\"offline\":true"));
         assert!(CallError::signed_out().text().contains("\"signedOut\":true"));
+    }
+
+    #[test]
+    fn temporary_refresh_failures_preserve_the_rotating_credential() {
+        use std::io::{Read, Write};
+        for status in [429, 503] {
+            let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+            let address = listener.local_addr().unwrap();
+            let server = std::thread::spawn(move || {
+                let (mut stream, _) = listener.accept().unwrap();
+                let mut request = [0u8; 4096]; let _ = stream.read(&mut request).unwrap();
+                let body = r#"{"error":"Retry later"}"#;
+                write!(stream, "HTTP/1.1 {status} Temporary Failure\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}", body.len()).unwrap();
+            });
+            let companion = Companion::new();
+            let tokens = Tokens { base: format!("http://{address}"), device_id: "synthetic-device".into(), access_token: "synthetic-expired".into(), refresh_token: "synthetic-refresh".into(), person_name: String::new() };
+            companion.tokens.finish_restore(Some(tokens.clone()));
+            let error = companion.refreshed(&tokens).err().expect("refresh must fail temporarily");
+            assert_eq!(error.status, status); assert!(!error.signed_out);
+            assert_eq!(companion.tokens.lock().unwrap().as_ref().unwrap().refresh_token, tokens.refresh_token);
+            server.join().unwrap();
+        }
     }
 
     #[test]

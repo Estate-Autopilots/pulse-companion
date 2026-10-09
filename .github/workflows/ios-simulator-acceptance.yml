@@ -110,7 +110,8 @@ jobs:
           - pressKey: Lock
           - pressKey: Lock
           - tapOn: {text: '^Allow$', optional: true}
-          - assertVisible: "You’re checked in"
+          # SpringBoard's Live Activity labels are not in the app's accessibility tree on iOS 26.
+          # Assert Working, Take a break and Check out through Vision on this real capture below.
           - takeScreenshot: ios-lock-screen
           FLOW
           maestro --device "$udid" test --test-output-dir screens --debug-output screens/maestro screens/dark.yaml
@@ -120,7 +121,9 @@ jobs:
             if [ "$shot" != "screens/$name.png" ]; then cp "$shot" "screens/$name.png"; fi
           done
           "$RUNNER_TEMP/ios-screen-check" screens/ios-in-dark.png 'Take a break'
-          "$RUNNER_TEMP/ios-screen-check" screens/ios-lock-screen.png 'checked in'
+          "$RUNNER_TEMP/ios-screen-check" screens/ios-lock-screen.png 'Working'
+          "$RUNNER_TEMP/ios-screen-check" screens/ios-lock-screen.png 'Take a break'
+          "$RUNNER_TEMP/ios-screen-check" screens/ios-lock-screen.png 'Check out'
           "$RUNNER_TEMP/ios-screen-check" screens/ios-island.png --pip-island
           xcrun simctl spawn "$udid" log show --last 5m --style compact --predicate 'process == "Pulse" OR eventMessage CONTAINS[c] "com.pulse.work.mobile"' > screens/surface-runtime.txt
           python3 - <<'PY'

@@ -17,3 +17,7 @@ input, textarea { user-select: text; -webkit-user-select: text; }
 @media (prefers-color-scheme: dark) { :root:not([data-theme="light"]) .connect-foot { color: #a4a5b8; } :root:not([data-theme="light"]) .connect-foot button { color: #a99cff; } }
 :root[data-theme="dark"] .connect-foot { color: #a4a5b8; }
 :root[data-theme="dark"] .connect-foot button { color: #a99cff; }
+
+.connection-status { align-items: center; flex-wrap: wrap; padding-top: 8px; }
+.connection-status span { flex: 1; min-width: 210px; }
+.connection-status button { flex-shrink: 0; padding: 4px 0; }

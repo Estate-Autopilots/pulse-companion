@@ -21,6 +21,11 @@ fn receipt(dir: &std::path::Path, name: &str, value: Value) {
 pub fn run() -> bool {
     let args: Vec<String> = std::env::args().collect();
     let Some(dir) = dir() else { return false };
+    if args.iter().any(|a| a == "--admission-acceptance") {
+        let result = crate::companion::Companion::new().admission_acceptance();
+        receipt(&dir, "admission.json", json!({"version":env!("CARGO_PKG_VERSION"),"result":result}));
+        return true;
+    }
     if let Some(op) = args.iter().position(|a| a == "--keychain-acceptance").and_then(|i| args.get(i + 1)) {
         let result = crate::companion::keychain_acceptance(op);
         receipt(&dir, &format!("keychain-{op}.json"), json!({"version": env!("CARGO_PKG_VERSION"), "operation": op, "result": result}));

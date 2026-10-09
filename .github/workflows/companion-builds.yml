@@ -9,6 +9,9 @@ on:
     # acceptance workflows and release notes. Channel pointer tags do not push main.
   workflow_dispatch:
     inputs:
+      macos_ping_build:
+        description: Existing public build run for notification-only acceptance (does not build or publish)
+        type: string
       version:
         description: Optional version override for the controlled upgrade acceptance
         type: string
@@ -27,10 +30,11 @@ permissions:
   contents: read
   actions: read
 concurrency:
-  group: companion-release
+  group: ${{ inputs.macos_ping_build && format('macos-ping-{0}', inputs.macos_ping_build) || 'companion-release' }}
   cancel-in-progress: false
 jobs:
   prepare:
+    if: ${{ !inputs.macos_ping_build }}
     runs-on: ubuntu-latest
     outputs:
       version: ${{ steps.version.outputs.version }}
@@ -45,6 +49,8 @@ jobs:
           TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
           ANDROID_SIGNING_STORE_BASE64: ${{ secrets.ANDROID_SIGNING_STORE_BASE64 }}
           ANDROID_SIGNING_PASSWORD: ${{ secrets.ANDROID_SIGNING_PASSWORD }}
+          MACOS_SIGNING_P12_BASE64: ${{ secrets.MACOS_SIGNING_P12_BASE64 }}
+          MACOS_SIGNING_P12_PASSWORD: ${{ secrets.MACOS_SIGNING_P12_PASSWORD }}
         run: node apps/desktop/scripts/check-release.mjs
       - id: version
         env: { GH_TOKEN: '${{ github.token }}', REQUESTED_VERSION: '${{ inputs.version }}' }
@@ -80,9 +86,9 @@ jobs:
       - run: corepack enable && pnpm install --frozen-lockfile
       - run: node --test --test-concurrency=2 packages/companion/test/*.test.js
       - run: pnpm --dir apps/desktop run build && pnpm --dir apps/desktop test
-      - run: cargo test -j2 --manifest-path apps/desktop/core/Cargo.toml
-      # One stable self-signed identity for every Mac build, so macOS treats each update as the same app and its
-      # Keychain items stay readable without a password prompt. The identity is a GitHub secret only.
+      - run: cargo test -j2 --manifest-path apps/desktop/core/Cargo.toml -- --test-threads=2
+      # Keep one self-signed identity across every Mac build. The login Keychain store separately preserves sign-in
+      # across updates without an Apple Team ID. Signing material comes only from GitHub secrets.
       - name: Load the stable Mac signing identity
         if: matrix.platform == 'macos'
         shell: bash
@@ -90,7 +96,7 @@ jobs:
           P12: ${{ secrets.MACOS_SIGNING_P12_BASE64 }}
           P12_PASSWORD: ${{ secrets.MACOS_SIGNING_P12_PASSWORD }}
         run: |
-          if [ -z "$P12" ]; then echo "No stable identity configured: this build stays ad-hoc signed"; exit 0; fi
+          if [ -z "$P12" ] || [ -z "$P12_PASSWORD" ]; then echo "Stable Mac signing identity is required"; exit 1; fi
           kc="$RUNNER_TEMP/pulse-signing.keychain-db"; kcpw=$(openssl rand -hex 16)
           printf '%s' "$P12" | base64 --decode > "$RUNNER_TEMP/pulse.p12"
           security create-keychain -p "$kcpw" "$kc"
@@ -115,6 +121,7 @@ jobs:
           args=()
           if [ "$VALIDATION_ONLY" = true ]; then args+=(--config '{"bundle":{"createUpdaterArtifacts":false}}'); fi
           pnpm --dir apps/desktop exec tauri build --bundles '${{ matrix.bundles }}' ${{ matrix.target && format('--target {0}', matrix.target) || '' }} "${args[@]}"
+      - run: cargo test -j2 --manifest-path apps/desktop/src-tauri/Cargo.toml -- --test-threads=2
       - name: Screenshot the panel on the runner (Windows)
         if: matrix.platform == 'windows'
         shell: pwsh
@@ -183,11 +190,48 @@ jobs:
           hdiutil attach "$dmg" -readonly -nobrowse -mountpoint "$RUNNER_TEMP/pulse-mount"
           app=$(find "$RUNNER_TEMP/pulse-mount" -maxdepth 2 -name '*.app' -print -quit)
           test -n "$app"
+          installer_sha=$(shasum -a 256 "$dmg" | cut -d' ' -f1)
+          mkdir -p "$HOME/Applications"
+          installed="$HOME/Applications/Pulse.app"
+          test ! -e "$installed"
+          ditto "$app" "$installed"
+          hdiutil detach "$RUNNER_TEMP/pulse-mount"
+          app="$installed"
           "$app/Contents/MacOS/pulse-desktop" --pinned > screens/macos-app.log 2>&1 &
           app_pid=$!
           sleep 15
           kill -0 "$app_pid"
           screencapture -x screens/macos-desktop.png
+          PULSE_ACCEPTANCE_DIR="$PWD/screens" "$app/Contents/MacOS/pulse-desktop" --admission-acceptance
+          node -e 'const r=JSON.parse(require("fs").readFileSync("screens/admission.json")).result.Ok;if(!r?.readDenied||!r?.refreshDenied||!r?.signedOutOnly)throw Error("Installed native HTTPS admission failed")'
+          # Real OS keyboard events against the installed DMG app; no browser or mock IPC.
+          osascript -e 'tell application "System Events" to key code 53'
+          sleep 2
+          cat > "$RUNNER_TEMP/panel-proof.swift" <<'SWIFT'
+          import Cocoa
+          let pid = Int32(CommandLine.arguments[1])!
+          let expected = CommandLine.arguments[2] == "visible"
+          let windows = CGWindowListCopyWindowInfo([.optionOnScreenOnly, .excludeDesktopElements], kCGNullWindowID) as! [[String: Any]]
+          let panels = windows.filter { ($0[kCGWindowOwnerPID as String] as? Int32) == pid && (($0[kCGWindowBounds as String] as? [String: Any])?["Width"] as? Double ?? 0) >= 300 }
+          if panels.isEmpty == expected { fatalError("Keyboard visibility assertion failed") }
+          if expected {
+            let b = CGRect(dictionaryRepresentation: panels[0][kCGWindowBounds as String] as! CFDictionary)!
+            let screens = NSScreen.screens
+            let top = screens[0].frame.maxY
+            let inside = screens.contains { screen in
+              let f = screen.visibleFrame
+              let work = CGRect(x:f.minX, y:top-f.maxY, width:f.width, height:f.height)
+              return work.insetBy(dx:-2,dy:-2).contains(b)
+            }
+            if !inside { fatalError("Panel outside monitor work area") }
+          }
+          SWIFT
+          swift "$RUNNER_TEMP/panel-proof.swift" "$app_pid" hidden
+          osascript -e 'tell application "System Events" to key code 35 using {control down, option down}'
+          sleep 2
+          swift "$RUNNER_TEMP/panel-proof.swift" "$app_pid" visible
+          if pgrep -x 'Google Chrome|Safari|Firefox|Microsoft Edge'; then echo 'Browser was running'; exit 1; fi
+          printf '{"installedFromDmg":true,"diskImageDetached":true,"installerSha256":"%s","escapeDismissed":true,"keyboardReopened":true,"placementInsideWorkArea":true,"browserProcesses":0,"buildCommit":"%s"}\n' "$installer_sha" "$GITHUB_SHA" > screens/macos-reliability.json
           kill "$app_pid"; wait "$app_pid" 2>/dev/null || true; sleep 2
           codesign -dvvv "$app" > screens/macos-signature.txt 2>&1 || true
           codesign -d -r- "$app" >> screens/macos-signature.txt 2>&1 || true
@@ -417,3 +461,11 @@ jobs:
     with:
       build_run: ${{ format('{0}', github.run_id) }}
       artifact_name: companion-desktop-windows-${{ github.sha }}
+
+  macos-pings:
+    if: ${{ inputs.macos_ping_build != '' }}
+    uses: ./.github/workflows/macos-acceptance.yml
+    with:
+      run_id: ${{ inputs.macos_ping_build }}
+      build_repo: Estate-Autopilots/pulse-companion
+      notification_proof: true
