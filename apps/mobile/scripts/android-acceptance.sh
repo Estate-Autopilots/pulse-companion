@@ -60,10 +60,10 @@ PY
   [ -n "$xy" ] || { echo "Nothing to tap for: $1" >&2; return 1; }
   adb shell input tap $xy
 }
-focused() { adb shell dumpsys window | grep -E 'mCurrentFocus' | grep -q "$PKG"; }
+focused() { adb shell dumpsys window > "$OUT/window.txt"; grep -E 'mCurrentFocus' "$OUT/window.txt" | grep -q "$PKG"; }
 alive() { [ -n "$(adb shell pidof $PKG | tr -d '\r')" ]; }
 pass() { echo "$1=pass${2:+ ($2)}" | tee -a "$OUT/acceptance.txt"; }
-code() { adb shell dumpsys package $PKG | grep -m1 -o 'versionCode=[0-9]*' | cut -d= -f2; }
+code() { adb shell dumpsys package $PKG > "$OUT/package.txt"; grep -m1 -o 'versionCode=[0-9]*' "$OUT/package.txt" | cut -d= -f2; }
 network() {
   if [ "$1" = off ]; then
     adb shell cmd connectivity airplane-mode enable || true; adb shell svc wifi disable || true; adb shell svc data disable || true
@@ -159,8 +159,10 @@ wait_text 'send you notifications' 30
 shot 5-notification-permission-prompt
 tap_text '^Allow$'
 sleep 4
-adb shell dumpsys package $PKG | grep -q 'android.permission.POST_NOTIFICATIONS: granted=true'
-adb shell dumpsys notification --noredact | grep -q "pkg=$PKG"
+adb shell dumpsys package $PKG > "$OUT/package.txt"
+grep -q 'android.permission.POST_NOTIFICATIONS: granted=true' "$OUT/package.txt"
+adb shell dumpsys notification > "$OUT/notifications.txt"
+grep -q "pkg=$PKG" "$OUT/notifications.txt"
 adb shell cmd statusbar expand-notifications || true
 sleep 2
 shot 5-notification-shown
