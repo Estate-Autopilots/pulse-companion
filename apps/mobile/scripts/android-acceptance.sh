@@ -17,11 +17,11 @@ SIGNIN=${PULSE_SIGNIN_TEXT:-Username}
 ACT=$PKG/.MainActivity
 # A lost emulator must fail with diagnostics instead of hanging an entire hosted job in adb.
 ADB_BIN=$(command -v adb)
-adb() { local limit=45; [ "${1:-}" != install ] || limit=180; timeout "$limit" "$ADB_BIN" "$@"; }
+adb() { local limit=45; [ "${1:-}" != install ] || limit=180; timeout --foreground "$limit" "$ADB_BIN" "$@"; }
 mkdir -p "$OUT"
 : > "$OUT/acceptance.txt"
 diagnostics() {
-  local result=$?
+  local result=${1:-$?}
   if [ "$result" != 0 ]; then
     adb logcat -d -b crash > "$OUT/crash.txt" 2>/dev/null || true
     adb logcat -d -s Capacitor AndroidRuntime chromium > "$OUT/webview.txt" 2>/dev/null || true
@@ -31,7 +31,18 @@ diagnostics() {
     shot failure || true
   fi
 }
-trap diagnostics EXIT
+# Retain native failures before a lost emulator makes every later ADB request unavailable. This logger belongs
+# only to this acceptance process and stops with it; it records runtime/process diagnostics, never bridge payloads.
+timeout --foreground 1800 "$ADB_BIN" logcat -v threadtime -s AndroidRuntime libc DEBUG ActivityManager OpenGLRenderer > "$OUT/native-live.txt" 2>&1 &
+LOGCAT_PID=$!
+cleanup() {
+  local result=$?
+  if [ "$result" != 0 ]; then diagnostics "$result"; fi
+  kill "$LOGCAT_PID" 2>/dev/null || true
+  wait "$LOGCAT_PID" 2>/dev/null || true
+  return "$result"
+}
+trap cleanup EXIT
 
 # The emulator can drop off adb for a moment under load: every phase starts by waiting for it to be fully booted.
 ready() { adb wait-for-device; local end=$((SECONDS + 180)); until [ "$(adb shell getprop sys.boot_completed 2>/dev/null | tr -d '\r')" = 1 ]; do (( SECONDS < end )) || { echo "Emulator did not recover" >&2; return 1; }; sleep 2; done; }
