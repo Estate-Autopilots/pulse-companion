@@ -29,6 +29,8 @@ for (const name of [`Pulse-${version}-android.apk`, `Pulse-${version}-ios-simula
 const apk = assets[0];
 // The exact entry promote-android.mjs places into the test channel after the go-ahead.
 await writeFile('release/android-channel-entry.json', JSON.stringify({ name: apk.name, platform: 'android', kind: 'apk', size: apk.size, sha256: apk.sha256, url: base + apk.name, versionCode }, null, 2) + '\n');
+const ios = assets[1];
+await writeFile('release/ios-simulator-entry.json', JSON.stringify({ name: ios.name, platform: 'ios', kind: 'simulator', size: ios.size, sha256: ios.sha256, url: base + ios.name }, null, 2) + '\n');
 const sums = [];
 for (const f of (await readdir('release')).sort()) sums.push(`${createHash('sha256').update(await readFile(join('release', f))).digest('hex')}  ${f}`);
 await writeFile('release/SHA256SUMS.txt', sums.join('\n') + '\n');
@@ -51,5 +53,5 @@ try { gh('release', 'view', pointer, '-R', repo); } catch {
   gh('release', 'create', pointer, '-R', repo, '--target', commit, '--prerelease', '--title', 'Pulse phone app download',
     '--notes', 'Points Get the apps at the newest phone app pre-release. Installed apps update only from the companion-test channel.');
 }
-gh('release', 'upload', pointer, 'release/android-channel-entry.json', '-R', repo, '--clobber');
+gh('release', 'upload', pointer, 'release/android-channel-entry.json', 'release/ios-simulator-entry.json', '-R', repo, '--clobber');
 console.log(JSON.stringify({ tag, url: `https://github.com/${repo}/releases/tag/${tag}`, versionCode, apkSha256: apk.sha256, downloadPointer: pointer }));

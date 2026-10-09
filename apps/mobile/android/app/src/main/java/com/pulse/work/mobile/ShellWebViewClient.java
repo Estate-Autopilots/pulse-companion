@@ -8,6 +8,7 @@ import android.webkit.WebResourceResponse;
 import android.webkit.WebView;
 import com.getcapacitor.Bridge;
 import com.getcapacitor.BridgeWebViewClient;
+import java.io.IOException;
 
 /**
  * Never a Chrome error page: when Pulse cannot be reached the shell shows its own offline screen with Retry.
@@ -29,6 +30,21 @@ final class ShellWebViewClient extends BridgeWebViewClient {
 
     static void showOffline(WebView view, String from, String why) {
         view.loadUrl(OFFLINE + "?why=" + why + "&from=" + Uri.encode(from));
+    }
+
+    @Override
+    public WebResourceResponse shouldInterceptRequest(WebView view, WebResourceRequest request) {
+        Uri url = request.getUrl();
+        // Capacitor recognises errorPath only when the URL matches exactly. Our Retry page carries the original
+        // route and reason in its query, so serve its bundled asset explicitly even with no network.
+        if ("https".equals(url.getScheme()) && "localhost".equals(url.getHost()) && "/offline.html".equals(url.getPath())) {
+            try {
+                return new WebResourceResponse("text/html", "UTF-8", bridge.getActivity().getAssets().open("public/offline.html"));
+            } catch (IOException error) {
+                return new WebResourceResponse("text/plain", "UTF-8", 500, "Offline page unavailable", null, null);
+            }
+        }
+        return super.shouldInterceptRequest(view, request);
     }
 
     // Capacitor's own handling would load server.errorPath for every failed request, even a Pulse 404; the shell

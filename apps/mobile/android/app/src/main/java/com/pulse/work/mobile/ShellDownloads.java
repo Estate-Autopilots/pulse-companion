@@ -58,6 +58,8 @@ final class ShellDownloads implements DownloadListener {
         WORK.execute(() -> {
             try {
                 HttpURLConnection c = (HttpURLConnection) new URL(url).openConnection();
+                // The page's session cookie belongs only to Pulse; never carry it through a download redirect.
+                c.setInstanceFollowRedirects(false);
                 c.setConnectTimeout(20000);
                 c.setReadTimeout(60000);
                 if (cookies != null) c.setRequestProperty("Cookie", cookies);
@@ -113,6 +115,6 @@ final class ShellDownloads implements DownloadListener {
     }
 
     private static String quote(String s) {
-        return "'" + (s == null ? "" : s.replace("\\", "\\\\").replace("'", "\\'").replace("\n", "")) + "'";
+        return org.json.JSONObject.quote(s == null ? "" : s);
     }
 }

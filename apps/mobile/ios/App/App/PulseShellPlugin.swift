@@ -128,7 +128,7 @@ public class PulseShellPlugin: CAPPlugin, CAPBridgedPlugin, CLLocationManagerDel
     @objc func info(_ call: CAPPluginCall) {
         UNUserNotificationCenter.current().getNotificationSettings { settings in
             call.resolve([
-                "platform": "ios", "version": self.version, "build": Bundle.main.infoDictionary?["CFBundleVersion"] as? String ?? "",
+                "platform": "ios", "version": self.version, "build": Int(Bundle.main.infoDictionary?["CFBundleVersion"] as? String ?? "") ?? 1001000,
                 "enrolled": self.enrolled, "deviceId": self.orNull(self.keychainGet("device")), "personId": self.orNull(self.keychainGet("person")),
                 "notifications": settings.authorizationStatus == .authorized, "pushReady": false, "pushActive": false,
             ])

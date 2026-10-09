@@ -17,6 +17,16 @@ SIGNIN=${PULSE_SIGNIN_TEXT:-Username}
 ACT=$PKG/.MainActivity
 mkdir -p "$OUT"
 : > "$OUT/acceptance.txt"
+diagnostics() {
+  local result=$?
+  if [ "$result" != 0 ]; then
+    adb logcat -d -b crash > "$OUT/crash.txt" 2>/dev/null || true
+    adb logcat -d -s Capacitor AndroidRuntime chromium > "$OUT/webview.txt" 2>/dev/null || true
+    adb shell dumpsys activity activities > "$OUT/activities.txt" 2>/dev/null || true
+    shot failure || true
+  fi
+}
+trap diagnostics EXIT
 
 # The emulator can drop off adb for a moment under load: every phase starts by waiting for it to be fully booted.
 ready() { adb wait-for-device; until [ "$(adb shell getprop sys.boot_completed 2>/dev/null | tr -d '\r')" = 1 ]; do sleep 2; done; }
@@ -63,6 +73,9 @@ network() {
 }
 adb shell settings put global window_animation_scale 0 || true
 adb shell settings put global transition_animation_scale 0 || true
+# Match the owner's phone proportions, instead of the runner's tiny default AVD.
+adb shell wm size 1080x2340
+adb shell wm density 480
 
 # 1. Upgrade in place over the published Expo app.
 if [ -n "$OLD" ]; then
@@ -88,11 +101,13 @@ ready
 # 2. Cold launch: the sign-in page, light and dark.
 adb shell pm clear $PKG >/dev/null
 adb shell cmd uimode night no || true
+sleep 3
 adb shell am start -W -n "$ACT" >/dev/null
 wait_text "$SIGNIN" 120
 shot 2-cold-launch-sign-in-light
 adb shell am force-stop $PKG
 adb shell cmd uimode night yes || true
+sleep 3
 adb shell am start -W -n "$ACT" >/dev/null
 wait_text "$SIGNIN" 120
 shot 2-cold-launch-sign-in-dark
