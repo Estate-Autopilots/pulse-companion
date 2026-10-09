@@ -388,6 +388,11 @@ mod tests {
         assert!(safe_path("//evil.example/x").is_none());
         assert!(safe_path("https://evil.example").is_none());
         assert!(safe_path("/me<script>").is_none());
+        assert!(safe_path("/me%3Cscript%3E").is_none());
+        assert!(safe_path("/%2Fevil.example").is_none());
+        assert!(safe_path("/me%5Cbad").is_none());
+        assert!(safe_path("/me%0Abad").is_none());
+        assert_eq!(safe_path("/me?section=Your%20month").as_deref(), Some("/me?section=Your%20month"));
         assert!(safe_path("me").is_none());
     }
     #[test]
@@ -400,6 +405,7 @@ mod tests {
         assert_eq!(parse_link("pulse://"), Some(Link::Page("/".into())));
         assert_eq!(parse_link("https://pulse.example/chats"), None);
         assert_eq!(parse_link("pulse://chats/<x>"), None);
+        assert_eq!(parse_link("pulse://chats/%3Cx%3E"), None);
     }
     #[test]
     fn saved_rectangles_must_be_on_a_screen() {

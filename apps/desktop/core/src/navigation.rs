@@ -10,13 +10,15 @@ pub fn safe_path(path: &str) -> Option<String> {
     // Url::parse escapes markup before this check. Permit escaped identifier characters,
     // but reject markup, controls, separators and nested escaping just like their plain form.
     let bytes = path.as_bytes();
+    let query_start = path.find('?');
     let mut i = 0;
     while i < bytes.len() {
         if bytes[i] == b'%' {
             let hi = (*bytes.get(i + 1)? as char).to_digit(16)?;
             let lo = (*bytes.get(i + 2)? as char).to_digit(16)?;
             let decoded = (hi * 16 + lo) as u8;
-            if !decoded.is_ascii_alphanumeric() && !b"-_.~".contains(&decoded) { return None; }
+            let query_space = decoded == b' ' && query_start.is_some_and(|start| i > start);
+            if !decoded.is_ascii_alphanumeric() && !b"-_.~".contains(&decoded) && !query_space { return None; }
             i += 3;
         } else { i += 1; }
     }
@@ -57,6 +59,8 @@ mod tests {
         assert_eq!(parse_link("pulse://panel"), Some(Link::Panel));
         assert_eq!(parse_link("pulse://"), Some(Link::Page("/".into())));
         assert_eq!(safe_path("/chats?channel=%61bc").as_deref(), Some("/chats?channel=%61bc"));
+        assert_eq!(safe_path("/me?section=Your%20month").as_deref(), Some("/me?section=Your%20month"));
+        assert_eq!(safe_path("/me%20path"), None);
     }
     #[test]
     fn encoded_markup_controls_and_other_origins_are_rejected() {
