@@ -1,5 +1,5 @@
 export type CommunicationSnapshot={person:{id:string;name:string};counts:{chats:number;inbox:number;total:number};rows:unknown[];settings?:unknown;suppression?:string|null};
-export type Communications={todayHost:HTMLDivElement;attach:()=>void;refresh:()=>Promise<void>;status:(text:string|null)=>void;pingIssue:(text:string|null)=>void;snapshot:(state:CommunicationSnapshot)=>void;open:(id:string,href?:string)=>void;showInbox:()=>void;showToday:()=>void;showChats:()=>void;destroy:()=>void};
+export type Communications={todayHost:HTMLDivElement;attach:()=>void;refresh:()=>Promise<void>;status:(text:string|null)=>void;pingIssue:(text:string|null)=>void;snapshot:(state:CommunicationSnapshot)=>void;open:(id:string,href?:string)=>Promise<void>;showInbox:()=>void;showToday:()=>void;showChats:()=>void;destroy:()=>void};
 export type CommunicationTool={id:string;label:string;icon:string;onClick?:()=>void};
 export function mountCommunications(root:HTMLElement,options:{call:(path:string,body?:unknown)=>Promise<any>;onOpen:(href:string)=>void;onSwitch?:()=>void;onResize?:()=>void;onEnablePings?:()=>void;onFixPings?:()=>void;isVisible?:()=>boolean;platform?:string;tools?:CommunicationTool[]|null;store?:{get(key:string,fallback:unknown):any;set(key:string,value:unknown):void}|null}):Communications;
 export function conversationTarget(href:string):string|null;

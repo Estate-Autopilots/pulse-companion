@@ -34,12 +34,13 @@ const WorkingDay = (p:DaySurface, env:LiveActivityEnvironment) => {
   const color='#eeeef6';
   const accent=env.isLuminanceReduced?'#b8b8c8':'#a99cff';
   return {
-    banner:<HStack spacing={12} modifiers={[padding({all:14}),activityBackgroundTint('#191a2e')]}>
+    banner:<HStack spacing={14} modifiers={[padding({all:16}),activityBackgroundTint('#191a2e')]}>
       {p.showPip?<Image assetName="Pip" modifiers={[resizable(),frame({width:48,height:48})]}/>:null}
-      <VStack alignment="leading"><Text modifiers={[font({size:17,weight:'bold'}),foregroundStyle(color)]}>{p.title}</Text>
-        {p.timerSince!==null?<Text date={new Date(p.timerSince)} dateStyle="timer" modifiers={[font({size:22,design:'monospaced'}),foregroundStyle(accent)]}/>:null}
-        {p.pending?<Text>Saved on phone · syncing</Text>:null}
-        <HStack spacing={12}>{p.actions.map(a=><Link key={a.id} label={a.label} destination={`pulse://attendance?action=${a.id}&entry=${p.entryId}&state=${p.state}`} modifiers={[foregroundStyle(accent)]}/>)}</HStack>
+      <VStack alignment="leading" spacing={4}>
+        <Text modifiers={[font({size:13,weight:'semibold'}),foregroundStyle('#a4a5b8')]}>{p.state==='break'?'On a break':'Working'}</Text>
+        {p.timerSince!==null?<Text date={new Date(p.timerSince)} dateStyle="timer" modifiers={[font({size:30,weight:'semibold',design:'rounded'}),foregroundStyle(color)]}/>:<Text modifiers={[font({size:17,weight:'bold'}),foregroundStyle(color)]}>{p.title}</Text>}
+        {p.pending?<Text modifiers={[font({size:12}),foregroundStyle('#a4a5b8')]}>Saved on phone · syncing</Text>:null}
+        <HStack spacing={16}>{p.actions.map(a=><Link key={a.id} label={a.label} destination={`pulse://attendance?action=${a.id}&entry=${p.entryId}&state=${p.state}`} modifiers={[font({size:15,weight:'semibold'}),foregroundStyle(accent)]}/>)}</HStack>
       </VStack>
     </HStack>,
     compactLeading:p.showPip?<Image assetName="PipIsland" modifiers={[resizable(),frame({width:26,height:26})]}/>:<Text>Pulse</Text>,

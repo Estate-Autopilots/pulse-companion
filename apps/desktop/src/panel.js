@@ -301,7 +301,7 @@ async function finishSessionRestore() {
     if (!state.session?.restoring) return;
     if (session.restoring) { setTimeout(() => void finishSessionRestore(), 1000); return; }
     // A demo started meanwhile keeps its screen; the restored (signed-out) session only replaces the session.
-    if (state.demo) { state.session = session; return; }
+    if (state.demo) { state.session = session; render(); return; }
     updates.reset(); updates.laterUntil = store.get('updateLater', 0);
     state.session = session; state.screen = session.signedIn ? 'day' : 'connect';
     if (!session.signedIn && session.notice) state.connect = { phase: 'start', message: session.notice };

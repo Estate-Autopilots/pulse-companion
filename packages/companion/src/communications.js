@@ -424,7 +424,8 @@ export function mountCommunications(root,{call,onOpen,onSwitch,onResize=()=>{},o
   showInbox(){tab='inbox';selected=null;selectedHref=null;draw();void refresh();},
   showToday(){select('today');},
   showChats(){select('chats');},
-  open(id,href){selectedHref=href??null;tab='chats';selected=id;draw();void loadMessages();},
+  // A ping or link can open a conversation before the list has loaded: load it first so the header has its name.
+  async open(id,href){selectedHref=href??null;tab='chats';selected=id;if(!channels.some(c=>c.id===id)){try{await refreshChannels();}catch{/* the header stays generic */}}if(selected!==id)return;conversation=null;draw();void loadMessages();},
   destroy(){disposed=true;clearTimeout(flashTimer);},
  };
 }
