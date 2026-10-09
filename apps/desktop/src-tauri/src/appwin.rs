@@ -80,7 +80,10 @@ fn same_site(url: &url::Url, site: &url::Url) -> bool { url.origin() == site.ori
 const INIT: &str = r#"(()=>{if(window.__pulseApp)return;const mac=/Mac/.test(navigator.platform);
 const tag=()=>document.documentElement.classList.add('pulse-desktop-app',mac?'pulse-app-mac':'pulse-app-windows');
 if(document.documentElement)tag();else document.addEventListener('DOMContentLoaded',tag);
-const search=()=>{const f=document.querySelector('input[type=search],[role=search] input,input[name=q],input[placeholder*="Search" i],input[aria-label*="Search" i]');if(f){f.focus();f.select?.();return;}location.href='/search';};
+const focusSearch=()=>{const f=document.querySelector('input[type=search],[role=search] input,input[name=q],input[placeholder*="Search" i],input[aria-label*="Search" i]');if(!f)return false;f.focus();f.select?.();return true;};
+const search=()=>{if(focusSearch())return;if(!/^(tauri|about|data|blob):$/.test(location.protocol)&&location.hostname!=='tauri.localhost')location.href='/people#pulse-search';};
+const focusLanding=()=>{if(location.hash!=='#pulse-search'||focusSearch())return;const observer=new MutationObserver(()=>{if(focusSearch())observer.disconnect();});observer.observe(document.documentElement,{childList:true,subtree:true});setTimeout(()=>observer.disconnect(),10000);};
+if(document.readyState==='loading')document.addEventListener('DOMContentLoaded',focusLanding,{once:true});else focusLanding();
 window.__pulseApp=Object.freeze({search,back:()=>history.back(),forward:()=>history.forward()});
 addEventListener('keydown',e=>{const mod=mac?e.metaKey:e.ctrlKey;if(!mod||e.altKey)return;const k=e.key.toLowerCase();
  if(k==='k'){e.preventDefault();search();}else if(k===','){e.preventDefault();location.href='pulse://settings';}
@@ -322,7 +325,9 @@ pub fn signed_out(app: &AppHandle) {
 
 /// Back, forward, reload, zoom and search for the menus (remote pages need no native access for these).
 pub fn command(app: &AppHandle, what: &str) {
+    if what == "search" && window(app).is_none() { open(app, Some("/people#pulse-search".into())); return; }
     let Some(win) = window(app) else { return };
+    if what == "search" { reveal(app, &win); }
     let script = match what {
         "back" => "history.back()",
         "forward" => "history.forward()",
