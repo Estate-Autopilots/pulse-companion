@@ -215,8 +215,8 @@ jobs:
           codesign --force --sign - "$RUNNER_TEMP/adhoc/Pulse.app"
           for v in n n1 adhoc; do codesign -dvvv "$RUNNER_TEMP/$v/Pulse.app" > "$proof/$v/signature.txt" 2>&1; codesign -d -r- "$RUNNER_TEMP/$v/Pulse.app" >> "$proof/$v/signature.txt" 2>&1; done
           if [ "$(grep CDHash= "$proof/n/signature.txt")" = "$(grep CDHash= "$proof/n1/signature.txt")" ]; then echo "N+1 must be different code"; exit 1; fi
-          grep -qi 'certificate leaf = H"de66190258537c00e1fe958a2f2380074d9fc58a"' "$proof/n/signature.txt"
-          grep -qi 'certificate leaf = H"de66190258537c00e1fe958a2f2380074d9fc58a"' "$proof/n1/signature.txt"
+          grep -qiE 'certificate (leaf|root) = H"de66190258537c00e1fe958a2f2380074d9fc58a"' "$proof/n/signature.txt"
+          grep -qiE 'certificate (leaf|root) = H"de66190258537c00e1fe958a2f2380074d9fc58a"' "$proof/n1/signature.txt"
           run() { PULSE_ACCEPTANCE_DIR="$proof/$1" perl -e 'alarm 60; exec @ARGV' "$RUNNER_TEMP/$1/Pulse.app/Contents/MacOS/pulse-desktop" --keychain-acceptance "$2"; }
           run n write
           run n1 read

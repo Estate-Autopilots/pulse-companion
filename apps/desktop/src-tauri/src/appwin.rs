@@ -137,7 +137,11 @@ pub fn open(app: &AppHandle, path: Option<String>) {
     #[cfg(windows)]
     { builder = builder.effects(tauri::utils::config::WindowEffectsConfig { effects: vec![tauri::window::Effect::Mica], ..Default::default() }); }
     let saved = load_geometry(app);
-    if saved.is_none() { builder = builder.center(); }
+    if saved.is_none() {
+        // First open: 1280×820, or 90% of a smaller screen, centred, so the title bar is always on screen.
+        let (w, h) = app.primary_monitor().ok().flatten().map(|m| { let a = m.work_area(); let s = m.scale_factor(); (a.size.width as f64 / s, a.size.height as f64 / s) }).unwrap_or((1440.0, 900.0));
+        builder = builder.inner_size((w * 0.9).min(1280.0).max(880.0), (h * 0.9).min(820.0).max(600.0)).center();
+    }
     let Ok(win) = builder.build() else { return };
     if let Some(g) = saved {
         let _ = win.set_size(PhysicalSize::new(g.width, g.height));

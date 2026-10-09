@@ -68,8 +68,8 @@
             {
               "name": "PulseToday",
               "label": "Pulse",
-              "description": "Check in, take a break and check out in one tap",
-              "minWidth": "250dp",
+              "description": "Check in, take a break and check out in one tap. Small, medium or large.",
+              "minWidth": "110dp",
               "minHeight": "110dp",
               "targetCellWidth": 4,
               "targetCellHeight": 2,
@@ -94,7 +94,8 @@
               "ios": {
                 "supportedFamilies": [
                   "systemSmall",
-                  "systemMedium"
+                  "systemMedium",
+                  "systemLarge"
                 ]
               }
             }
