@@ -132,9 +132,9 @@ jobs:
           heap-size: 512M
           disk-size: 6000M
           emulator-boot-timeout: 900
-          # Current emulator releases deprecate swiftshader_indirect. GLES software rendering avoids Chromium's
-          # Vulkan compatibility failures on the headless runner (Android's emulator troubleshooting guidance).
-          emulator-options: -no-window -gpu swiftshader -feature -Vulkan -noaudio -no-boot-anim -no-snapshot
+          # The pinned emulator segfaulted (exit 139) with SwiftShader during WebView launch. Android documents
+          # lavapipe as the independent Mesa software backend; keep guest Vulkan disabled for Chromium.
+          emulator-options: -no-window -gpu lavapipe -feature -Vulkan -noaudio -no-boot-anim -no-snapshot
           disable-animations: true
           # Keep the long-lived emulator's output on a file descriptor that survives the action's launch shell.
           # It also preserves host-side failures after ADB has disappeared.

@@ -51,6 +51,10 @@ public class PulseShellPlugin: CAPPlugin, CAPBridgedPlugin, CLLocationManagerDel
     private var pairingAt = Date.distantPast
     private var access: String?
     private var accessUntil = Date.distantPast
+    private let credentialLock = NSLock()
+    private var credentialGeneration = 0
+    private var refreshing = false
+    private var tokenWaiters: [(String?) -> Void] = []
     private var locator: CLLocationManager?
     private var locationCall: CAPPluginCall?
     private var locationTimeout: DispatchWorkItem?
@@ -106,24 +110,50 @@ public class PulseShellPlugin: CAPPlugin, CAPBridgedPlugin, CLLocationManagerDel
     }
 
     private func accessToken(_ done: @escaping (String?) -> Void) {
-        if let access = access, Date() < accessUntil.addingTimeInterval(-60) { return done(access) }
-        guard let refresh = keychainGet("refresh") else { return done(nil) }
+        credentialLock.lock()
+        if let access = access, Date() < accessUntil.addingTimeInterval(-60) { credentialLock.unlock(); return done(access) }
+        guard let refresh = keychainGet("refresh") else { credentialLock.unlock(); return done(nil) }
+        tokenWaiters.append(done)
+        if refreshing { credentialLock.unlock(); return }
+        refreshing = true
+        let generation = credentialGeneration
+        credentialLock.unlock()
+        // Refresh credentials are single-use. Concurrent Settings/location calls share one rotation.
         gateway("native/refresh", ["refreshToken": refresh]) { status, json in
-            guard status == 200, let next = json["refreshToken"] as? String, let token = json["accessToken"] as? String else {
-                if status == 401 { self.forget() }
-                return done(nil)
+            self.credentialLock.lock()
+            // A sign-out or replacement enrollment must never be undone by an older refresh response.
+            guard generation == self.credentialGeneration else { self.credentialLock.unlock(); return }
+            var result: String?
+            if status == 200, let next = json["refreshToken"] as? String, let token = json["accessToken"] as? String {
+                self.keychainSet("refresh", next)
+                self.access = token
+                self.accessUntil = Date().addingTimeInterval(TimeInterval((json["expiresIn"] as? Int) ?? 900))
+                result = token
+            } else if status == 401 {
+                for key in ["refresh", "device", "person"] { self.keychainSet(key, nil) }
+                self.access = nil
+                self.accessUntil = .distantPast
+                self.credentialGeneration += 1
             }
-            self.keychainSet("refresh", next)
-            self.access = token
-            self.accessUntil = Date().addingTimeInterval(TimeInterval((json["expiresIn"] as? Int) ?? 900))
-            done(token)
+            let waiters = self.tokenWaiters
+            self.tokenWaiters = []
+            self.refreshing = false
+            self.credentialLock.unlock()
+            waiters.forEach { $0(result) }
         }
     }
 
     private func forget() {
+        credentialLock.lock()
         for key in ["refresh", "device", "person"] { keychainSet(key, nil) }
         access = nil
         accessUntil = .distantPast
+        credentialGeneration += 1
+        refreshing = false
+        let waiters = tokenWaiters
+        tokenWaiters = []
+        credentialLock.unlock()
+        waiters.forEach { $0(nil) }
     }
 
     // MARK: Bridge
@@ -158,11 +188,13 @@ public class PulseShellPlugin: CAPPlugin, CAPBridgedPlugin, CLLocationManagerDel
                 let state = json["status"] as? String
                 if status == 200, state == "approved", let refresh = json["refreshToken"] as? String, let device = json["deviceId"] as? String {
                     self.forget()
+                    self.credentialLock.lock()
                     self.keychainSet("refresh", refresh)
                     self.keychainSet("device", device)
                     self.keychainSet("person", (json["person"] as? [String: Any])?["id"] as? String)
                     self.access = json["accessToken"] as? String
                     self.accessUntil = Date().addingTimeInterval(840)
+                    self.credentialLock.unlock()
                     self.pairing = nil
                     return call.resolve(["deviceId": device])
                 }
