@@ -5,6 +5,7 @@ on:
       run_id: {required: true, type: string}
       build_repo: {required: true, type: string}
       notification_proof: {required: true, type: boolean}
+      macos_runner: {required: false, type: string, default: macos-latest}
   workflow_dispatch:
     inputs:
       run_id:
@@ -15,6 +16,11 @@ on:
         description: Repository containing the reviewed installer
         required: true
         default: Estate-Autopilots/pulse-companion
+      macos_runner:
+        description: Hosted OS for cross-version installer acceptance
+        type: choice
+        options: [macos-latest, macos-15]
+        default: macos-latest
       notification_proof:
         description: Grant notification permission through the real UI and prove a delivered ping
         type: boolean
@@ -24,7 +30,7 @@ permissions:
   actions: read
 jobs:
   installed-panel:
-    runs-on: macos-latest
+    runs-on: ${{ inputs.macos_runner || 'macos-latest' }}
     timeout-minutes: 15
     env:
       BUILD_RUN: ${{ inputs.run_id || '37885235267' }}
