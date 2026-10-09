@@ -7,16 +7,25 @@ export type DaySurface = SurfaceState & {entryId:string;showPip:boolean};
 const Today = (p:DaySurface, env:WidgetEnvironment) => {
   'widget';
   const color=env.colorScheme==='dark'?'#eeeef6':'#191a2e';
+  const muted=env.colorScheme==='dark'?'#a4a5b8':'#66687e';
   const accent=env.colorScheme==='dark'?'#a99cff':'#5b45d6';
-  return <VStack spacing={8} modifiers={[padding({all:10}),widgetURL('pulse://today')]}>
-    <HStack spacing={8}>
-      {p.showPip?<Image assetName="Pip" modifiers={[resizable(),frame({width:42,height:42})]}/>:null}
-      <VStack alignment="leading"><Text modifiers={[font({size:15,weight:'bold'}),foregroundStyle(color)]}>{p.title}</Text>
-        {p.timerSince!==null?<Text date={new Date(p.timerSince)} dateStyle="timer" modifiers={[font({size:20,design:'monospaced'}),foregroundStyle(accent)]}/>:null}
-        {p.pending?<Text>Saved on phone · syncing</Text>:null}
+  // Small: Pip, the state and the running timer; the whole widget opens Pulse (one tap target is all iOS allows).
+  if(env.widgetFamily==='systemSmall')return <VStack alignment="leading" spacing={6} modifiers={[padding({all:4}),widgetURL('pulse://today')]}>
+    {p.showPip?<Image assetName="Pip" modifiers={[resizable(),frame({width:40,height:40})]}/>:null}
+    <Text modifiers={[font({size:14,weight:'bold'}),foregroundStyle(color)]}>{p.title}</Text>
+    {p.timerSince!==null?<Text date={new Date(p.timerSince)} dateStyle="timer" modifiers={[font({size:22,weight:'semibold',design:'rounded'}),foregroundStyle(accent)]}/>:<Text modifiers={[font({size:12}),foregroundStyle(muted)]}>Tap to open Pulse</Text>}
+  </VStack>;
+  const large=env.widgetFamily==='systemLarge';
+  return <VStack alignment="leading" spacing={large?14:8} modifiers={[padding({all:large?14:10}),widgetURL('pulse://today')]}>
+    <HStack spacing={10}>
+      {p.showPip?<Image assetName="Pip" modifiers={[resizable(),frame({width:large?56:42,height:large?56:42})]}/>:null}
+      <VStack alignment="leading"><Text modifiers={[font({size:large?18:15,weight:'bold'}),foregroundStyle(color)]}>{p.title}</Text>
+        {p.timerSince!==null?<Text date={new Date(p.timerSince)} dateStyle="timer" modifiers={[font({size:large?34:20,weight:'semibold',design:'rounded'}),foregroundStyle(accent)]}/>:null}
+        {p.pending?<Text modifiers={[font({size:12}),foregroundStyle(muted)]}>Saved on phone · syncing</Text>:null}
       </VStack>
     </HStack>
-    <HStack spacing={10}>{p.actions.map(a=><Link key={a.id} label={a.label} destination={`pulse://attendance?action=${a.id}&entry=${p.entryId}&state=${p.state}`} modifiers={[foregroundStyle(accent)]}/>)}</HStack>
+    {large?<Text modifiers={[font({size:13}),foregroundStyle(muted)]}>{p.state==='break'?'On a break. Tap Back when you return.':p.state==='in'?'Working. Breaks and check-out are one tap away.':p.state==='done'?'Done for today. See you tomorrow.':'Check in with one tap when you start.'}</Text>:null}
+    <HStack spacing={large?16:10}>{p.actions.map(a=><Link key={a.id} label={a.label} destination={`pulse://attendance?action=${a.id}&entry=${p.entryId}&state=${p.state}`} modifiers={[font({size:large?16:14,weight:'semibold'}),foregroundStyle(accent)]}/>)}</HStack>
   </VStack>;
 };
 const WorkingDay = (p:DaySurface, env:LiveActivityEnvironment) => {

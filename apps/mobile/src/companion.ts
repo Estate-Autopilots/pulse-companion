@@ -1,7 +1,7 @@
 // The phone companion: the day (online or from the encrypted cache plus the offline queue), one-tap actions,
 // reminders as local notifications with action buttons, and presence: office/site geofences through the OS (region
 // monitoring, no polling, no location history) and office Wi-Fi. Pure decisions live in the shared core.
-import { Platform } from 'react-native';
+import { Alert, Platform } from 'react-native';
 import * as Location from 'expo-location';
 import * as Notifications from 'expo-notifications';
 import * as SecureStore from 'expo-secure-store';
@@ -192,12 +192,22 @@ export async function onRegion(kind: 'enter' | 'exit', identifier: string) {
 export type PresenceStatus = { on: boolean; background: boolean; regions: number; note: string };
 
 /** Turn presence on: ask for location, then let the OS watch the office and site boundaries. */
+/** Every permission is asked only after Pulse says what it gives the person; "Not now" is always fine. */
+export function explain(title: string, benefit: string): Promise<boolean> {
+  return new Promise((resolve) => Alert.alert(title, benefit, [{ text: 'Not now', style: 'cancel', onPress: () => resolve(false) }, { text: 'Continue', onPress: () => resolve(true) }], { cancelable: true, onDismiss: () => resolve(false) }));
+}
+
 export async function startPresence(payload: CompanionPayload): Promise<PresenceStatus> {
-  const fg = await Location.requestForegroundPermissionsAsync();
-  if (!fg.granted) return { on: false, background: false, regions: 0, note: 'Location permission is off, so office suggestions are unavailable. You can still check in manually.' };
+  const off = { on: false, background: false, regions: 0, note: 'Location permission is off, so office suggestions are unavailable. You can still check in manually.' };
+  let fg = await Location.getForegroundPermissionsAsync();
+  if (!fg.granted) {
+    if (!fg.canAskAgain || !(await explain('Never miss a check-in', 'Pulse can notice when you reach a registered office and offer one-tap check-in, and that office evidence protects you from being marked late by mistake. Your phone asks for Location next. Pulse keeps no location history.'))) return off;
+    fg = await Location.requestForegroundPermissionsAsync();
+  }
+  if (!fg.granted) return off;
   const regions = regionsToMonitor(payload.presence, Platform.OS === 'ios' ? IOS_REGION_LIMIT : ANDROID_REGION_LIMIT);
   let bg = await Location.getBackgroundPermissionsAsync();
-  if (!bg.granted && bg.canAskAgain) bg = await Location.requestBackgroundPermissionsAsync();
+  if (!bg.granted && bg.canAskAgain && regions.length && await explain('Even when Pulse is closed', 'Choose “Allow all the time” so your phone itself tells Pulse when you arrive at or leave a registered office. Only arriving and leaving an office are used, never where else you go.')) bg = await Location.requestBackgroundPermissionsAsync();
   if (bg.granted && regions.length) {
     await Location.startGeofencingAsync(GEOFENCE_TASK, regions.map((r) => ({ identifier: r.id, latitude: r.lat, longitude: r.lng, radius: r.radius, notifyOnEnter: true, notifyOnExit: true })));
     return { on: true, background: true, regions: regions.length, note: `Watching ${regions.length} place${regions.length === 1 ? '' : 's'} through your phone’s own region monitoring. No location history is kept.` };

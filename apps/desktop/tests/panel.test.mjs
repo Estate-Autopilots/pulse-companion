@@ -34,6 +34,29 @@ test('every command the panel calls is registered in the shell', async () => {
   for (const [, cmd] of js.matchAll(/invoke\('([a-z_]+)'/g)) assert.match(handler, new RegExp(`\\b${cmd}\\b`), cmd);
 });
 
+test('Settings and the Pulse window screens call only registered commands and load only local modules', async () => {
+  const rust = await read('../src-tauri/src/lib.rs');
+  const handler = rust.slice(rust.indexOf('generate_handler!['));
+  for (const [page, script] of [['settings.html', 'settings.js'], ['app.html', 'app.js']]) {
+    const html = await read(`../src/${page}`);
+    assert.match(html, new RegExp(`<script type="module" src="${script}"></script>`));
+    assert.doesNotMatch(html, /<script>(?!<\/script>)|style="/);
+    const js = await read(`../src/${script}`);
+    for (const [, cmd] of js.matchAll(/invoke\('([a-z_]+)'/g)) assert.match(handler, new RegExp(`\\b${cmd}\\b`), `${script}: ${cmd}`);
+    for (const m of js.matchAll(/from '\.\/companion\/([a-z-]+)\.js'/g)) await stat(new URL(`../../../packages/companion/src/${m[1]}.js`, import.meta.url));
+    assert.doesNotMatch(js, /innerHTML\s*=\s*[^;]*(state|session|payload|message|notice)/, `${script}: no server text through innerHTML`);
+  }
+});
+
+test('the old Settings & privacy window is gone and remote Pulse pages get no native commands', async () => {
+  const rust = await read('../src-tauri/src/lib.rs');
+  assert.doesNotMatch(rust, /privacy\.html/);
+  await assert.rejects(stat(new URL('../src/privacy.html', import.meta.url)));
+  const capability = JSON.parse(await read('../src-tauri/capabilities/local.json'));
+  assert.equal(capability.remote, undefined, 'no capability may name a remote origin');
+  assert.deepEqual(capability.permissions, ['core:event:default']);
+});
+
 test('optional activity metadata stays off: the shell starts the tracker paused', async () => {
   const rust = await read('../src-tauri/src/lib.rs');
   assert.match(rust, /if tracker\.status\(&core\)\.paused \{ core\.set_pause\("until-resumed"\)/);

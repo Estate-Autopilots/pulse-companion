@@ -81,6 +81,29 @@ jobs:
       - run: node --test --test-concurrency=2 packages/companion/test/*.test.js
       - run: pnpm --dir apps/desktop run build && pnpm --dir apps/desktop test
       - run: cargo test -j2 --manifest-path apps/desktop/core/Cargo.toml
+      # One stable self-signed identity for every Mac build, so macOS treats each update as the same app and its
+      # Keychain items stay readable without a password prompt. The identity is a GitHub secret only.
+      - name: Load the stable Mac signing identity
+        if: matrix.platform == 'macos'
+        shell: bash
+        env:
+          P12: ${{ secrets.MACOS_SIGNING_P12_BASE64 }}
+          P12_PASSWORD: ${{ secrets.MACOS_SIGNING_P12_PASSWORD }}
+        run: |
+          if [ -z "$P12" ]; then echo "No stable identity configured: this build stays ad-hoc signed"; exit 0; fi
+          kc="$RUNNER_TEMP/pulse-signing.keychain-db"; kcpw=$(openssl rand -hex 16)
+          printf '%s' "$P12" | base64 --decode > "$RUNNER_TEMP/pulse.p12"
+          security create-keychain -p "$kcpw" "$kc"
+          security set-keychain-settings -t 3600 -u "$kc"
+          security unlock-keychain -p "$kcpw" "$kc"
+          security import "$RUNNER_TEMP/pulse.p12" -k "$kc" -P "$P12_PASSWORD" -T /usr/bin/codesign
+          security set-key-partition-list -S apple-tool:,apple:,codesign: -s -k "$kcpw" "$kc" > /dev/null
+          security list-keychains -d user -s "$kc" $(security list-keychains -d user | tr -d '"')
+          security find-certificate -c "Pulse Code Signing" -p "$kc" > "$RUNNER_TEMP/pulse-signing.pem"
+          sudo security add-trusted-cert -d -r trustRoot -p codeSign -k /Library/Keychains/System.keychain "$RUNNER_TEMP/pulse-signing.pem"
+          rm -f "$RUNNER_TEMP/pulse.p12"
+          security find-identity -v -p codesigning "$kc" | grep -q '"Pulse Code Signing"'
+          echo "APPLE_SIGNING_IDENTITY=Pulse Code Signing" >> "$GITHUB_ENV"
       - name: Build installers
         shell: bash
         env:
@@ -114,6 +137,42 @@ jobs:
           $g = [System.Drawing.Graphics]::FromImage($bmp); $g.CopyFromScreen($b.Location, [System.Drawing.Point]::Empty, $b.Size)
           $bmp.Save("screens/windows-desktop.png", [System.Drawing.Imaging.ImageFormat]::Png)
           Stop-Process -Id $app.Id -Force
+          Start-Sleep -Seconds 2
+          # Today, Inbox, Chats and an open conversation (synthetic demo data), Settings and the Pulse window, light and dark.
+          function Shot([string]$name, [string[]]$launch) {
+            $p = if ($launch.Count) { Start-Process -FilePath apps/desktop/src-tauri/target/release/pulse-desktop.exe -ArgumentList $launch -PassThru } else { Start-Process -FilePath apps/desktop/src-tauri/target/release/pulse-desktop.exe -PassThru }
+            Start-Sleep -Seconds 12
+            if ($p.HasExited) { throw "Pulse exited while showing $name" }
+            $bmp = New-Object System.Drawing.Bitmap $b.Width, $b.Height
+            $g = [System.Drawing.Graphics]::FromImage($bmp); $g.CopyFromScreen($b.Location, [System.Drawing.Point]::Empty, $b.Size)
+            $bmp.Save("screens/$name.png", [System.Drawing.Imaging.ImageFormat]::Png); $g.Dispose(); $bmp.Dispose()
+            Stop-Process -Id $p.Id -Force; Start-Sleep -Seconds 2
+          }
+          foreach ($theme in 'light','dark') {
+            foreach ($tab in 'today','inbox','chats','conversation') { Shot "windows-$theme-$tab" @('--pinned','--demo',"--tab=$tab","--theme=$theme") }
+            Shot "windows-$theme-settings" @('--settings=general',"--theme=$theme")
+            Shot "windows-$theme-privacy" @('--settings=privacy',"--theme=$theme")
+          }
+          Shot 'windows-app-window' @()
+      - name: Show a real Windows toast through Pulse's registered identity
+        if: matrix.platform == 'windows'
+        continue-on-error: true
+        shell: powershell
+        run: |
+          $proof = Join-Path $env:RUNNER_TEMP 'ping-proof'; New-Item -ItemType Directory -Force $proof | Out-Null
+          $env:PULSE_ACCEPTANCE_DIR = $proof
+          $ping = Start-Process apps/desktop/src-tauri/target/release/pulse-desktop.exe -ArgumentList '--ping-acceptance' -PassThru
+          Start-Sleep -Seconds 4
+          Add-Type -AssemblyName System.Windows.Forms,System.Drawing
+          $b = [System.Windows.Forms.Screen]::PrimaryScreen.Bounds; $bmp = New-Object System.Drawing.Bitmap $b.Width, $b.Height
+          $g = [System.Drawing.Graphics]::FromImage($bmp); $g.CopyFromScreen($b.Location, [System.Drawing.Point]::Empty, $b.Size); $bmp.Save("screens/windows-toast.png", [System.Drawing.Imaging.ImageFormat]::Png)
+          $ping.WaitForExit(30000) | Out-Null
+          [Windows.UI.Notifications.ToastNotificationManager, Windows.UI.Notifications, ContentType = WindowsRuntime] | Out-Null
+          $history = @([Windows.UI.Notifications.ToastNotificationManager]::History.GetHistory('com.pulse.work')).Count
+          $setting = "$([Windows.UI.Notifications.ToastNotificationManager]::CreateToastNotifier('com.pulse.work').Setting)"
+          $receipt = Get-Content (Join-Path $proof 'ping.json') -Raw | ConvertFrom-Json
+          @{shown=$receipt.shown; error=$receipt.error; historyCount=$history; setting=$setting} | ConvertTo-Json | Set-Content screens/windows-toast.json
+          if ($history -lt 1 -or $setting -ne 'Enabled') { throw "Toast not delivered: history $history, setting $setting" }
       - name: Screenshot the panel on the runner (macOS)
         if: matrix.platform == 'macos'
         run: |
@@ -129,8 +188,40 @@ jobs:
           sleep 15
           kill -0 "$app_pid"
           screencapture -x screens/macos-desktop.png
-          kill "$app_pid"
-          hdiutil detach "$RUNNER_TEMP/pulse-mount"
+          kill "$app_pid"; wait "$app_pid" 2>/dev/null || true; sleep 2
+          codesign -dvvv "$app" > screens/macos-signature.txt 2>&1 || true
+          codesign -d -r- "$app" >> screens/macos-signature.txt 2>&1 || true
+          # Today, Inbox, Chats and an open conversation (synthetic demo data), Settings and the Pulse window, light and dark.
+          shot() { name=$1; shift; "$app/Contents/MacOS/pulse-desktop" "$@" > "screens/$name.log" 2>&1 & pid=$!; sleep 12; kill -0 "$pid"; screencapture -x "screens/$name.png"; kill "$pid"; wait "$pid" 2>/dev/null || true; sleep 2; }
+          for theme in light dark; do
+            for tab in today inbox chats conversation; do shot "macos-$theme-$tab" --pinned --demo "--tab=$tab" "--theme=$theme"; done
+            shot "macos-$theme-settings" --settings=general "--theme=$theme"
+            shot "macos-$theme-privacy" --settings=privacy "--theme=$theme"
+          done
+          shot macos-app-window
+          echo "PULSE_MAC_APP=$app" >> "$GITHUB_ENV"
+      # Install build N, sign in (a synthetic credential stored exactly like a real sign-in), update to N+1 (same
+      # identity, different code), read it back with Keychain prompts disabled: no prompt, still signed in.
+      - name: Prove the saved sign-in survives an update without a Keychain prompt
+        if: matrix.platform == 'macos' && env.APPLE_SIGNING_IDENTITY != ''
+        shell: bash
+        run: |
+          set -euo pipefail
+          proof="$PWD/screens/keychain"; mkdir -p "$proof/n" "$proof/n1"
+          for v in n n1; do mkdir -p "$RUNNER_TEMP/$v"; ditto "$PULSE_MAC_APP" "$RUNNER_TEMP/$v/Pulse.app"; done
+          /usr/libexec/PlistBuddy -c "Set :CFBundleShortVersionString 99.0.1" -c "Set :CFBundleVersion 99.0.1" "$RUNNER_TEMP/n1/Pulse.app/Contents/Info.plist"
+          codesign --force --options runtime --sign "$APPLE_SIGNING_IDENTITY" "$RUNNER_TEMP/n1/Pulse.app"
+          for v in n n1; do codesign -dvvv "$RUNNER_TEMP/$v/Pulse.app" > "$proof/$v/signature.txt" 2>&1; codesign -d -r- "$RUNNER_TEMP/$v/Pulse.app" >> "$proof/$v/signature.txt" 2>&1; done
+          if [ "$(grep CDHash= "$proof/n/signature.txt")" = "$(grep CDHash= "$proof/n1/signature.txt")" ]; then echo "N+1 must be different code"; exit 1; fi
+          grep -qiE 'certificate (leaf|root) = H"de66190258537c00e1fe958a2f2380074d9fc58a"' "$proof/n/signature.txt"
+          grep -qiE 'certificate (leaf|root) = H"de66190258537c00e1fe958a2f2380074d9fc58a"' "$proof/n1/signature.txt"
+          run() { PULSE_ACCEPTANCE_DIR="$proof/$1" perl -e 'alarm 60; exec @ARGV' "$RUNNER_TEMP/$1/Pulse.app/Contents/MacOS/pulse-desktop" --keychain-acceptance "$2"; }
+          run n write
+          run n write-legacy
+          run n1 read
+          run n1 read-legacy
+          run n clear
+          node -e 'const r=(n,f)=>JSON.parse(require("fs").readFileSync(`${process.argv[1]}/${n}/keychain-${f}.json`)).result.read;const a=r("n1","read"),b=r("n1","read-legacy");console.log(JSON.stringify({updatedBuild:a,appPartitionItem:b}));if(a!=="found")throw Error("N+1 could not read the sign-in silently: "+a);if(!["found","unreadable","missing"].includes(b))throw Error("unexpected legacy result "+b);' "$proof"
       - uses: actions/upload-artifact@v7
         with:
           name: companion-desktop-${{ matrix.platform }}-${{ github.sha }}

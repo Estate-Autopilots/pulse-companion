@@ -5,7 +5,7 @@ use reqwest::blocking::Client;
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 use std::{sync::Mutex, time::Duration};
-use pulse_desktop_core::startup::DeferredCredentials;
+use pulse_desktop_core::startup::{restore_choice, DeferredCredentials, Lookup};
 
 pub const DEFAULT_BASE: &str = "https://pulse.estateautopilots.com/api/native/v0";
 const SERVICE: &str = "com.pulse.work";
@@ -49,24 +49,108 @@ pub struct Companion {
     refresh: Mutex<()>,
     pairing: Mutex<Option<Pairing>>,
     two_step: Mutex<Option<TwoStep>>,
+    notice: Mutex<Option<&'static str>>,
 }
 
+// The OS credential store keeps the device credential. Windows: Credential Manager, which survives updates.
+// macOS: the login Keychain through Apple's security tool, so every Pulse build (each update has a new code hash and,
+// without an Apple Team ID, its own Keychain partition) reads it without a prompt; see core mac_keychain. Older
+// builds' own items are read only with Keychain prompts disabled and moved over; if locked, the person signs in again.
+#[cfg(target_os = "macos")]
+const CURRENT: &str = "companion-device-v3";
+#[cfg(target_os = "macos")]
+const OLDER: [&str; 2] = ["companion-device-v2", ENTRY];
+#[cfg(windows)]
+const CURRENT: &str = ENTRY;
+
 #[cfg(any(windows, target_os = "macos"))]
-fn load_tokens() -> Option<Tokens> {
-    let secret = keyring::Entry::new(SERVICE, ENTRY).ok()?.get_password().ok()?;
-    serde_json::from_str(&secret).ok()
+fn keyring_lookup(entry: &str) -> Lookup<Tokens> {
+    match keyring::Entry::new(SERVICE, entry).map(|e| e.get_password()) {
+        Ok(Ok(secret)) => serde_json::from_str(&secret).map(Lookup::Found).unwrap_or(Lookup::Missing),
+        Ok(Err(keyring::Error::NoEntry)) => Lookup::Missing,
+        _ => Lookup::Unreadable,
+    }
 }
+#[cfg(target_os = "macos")]
+fn lookup(entry: &str) -> Lookup<Tokens> {
+    match pulse_desktop_core::mac_keychain::read(SERVICE, entry) {
+        Lookup::Found(secret) => serde_json::from_str(&secret).map(Lookup::Found).unwrap_or(Lookup::Missing),
+        Lookup::Missing => Lookup::Missing,
+        Lookup::Unreadable => Lookup::Unreadable,
+    }
+}
+#[cfg(windows)]
+fn lookup(entry: &str) -> Lookup<Tokens> { keyring_lookup(entry) }
+
 #[cfg(any(windows, target_os = "macos"))]
+fn load_tokens() -> (Option<Tokens>, Option<&'static str>) {
+    #[cfg(target_os = "macos")]
+    let older = || { for entry in OLDER { match keyring_lookup(entry) { Lookup::Missing => continue, other => return other } } Lookup::Missing };
+    #[cfg(windows)]
+    let older = || Lookup::Missing;
+    let (tokens, migrate, notice) = restore_choice(lookup(CURRENT), older);
+    if migrate { if let Some(t) = &tokens { let _ = save_tokens(t); } }
+    (tokens, notice)
+}
+#[cfg(target_os = "macos")]
 fn save_tokens(t: &Tokens) -> Result<(), CallError> {
-    keyring::Entry::new(SERVICE, ENTRY)
+    pulse_desktop_core::mac_keychain::write(SERVICE, CURRENT, &serde_json::to_string(t).unwrap_or_default())
+        .map_err(|_| CallError::status(0, "This computer’s credential store refused to keep the Pulse sign-in"))
+}
+#[cfg(windows)]
+fn save_tokens(t: &Tokens) -> Result<(), CallError> {
+    keyring::Entry::new(SERVICE, CURRENT)
         .and_then(|e| e.set_password(&serde_json::to_string(t).unwrap_or_default()))
         .map_err(|_| CallError::status(0, "This computer’s credential store refused to keep the Pulse sign-in"))
 }
 #[cfg(any(windows, target_os = "macos"))]
-fn forget_tokens() { if let Ok(e) = keyring::Entry::new(SERVICE, ENTRY) { let _ = e.delete_credential(); } }
+fn forget_tokens() {
+    #[cfg(target_os = "macos")]
+    {
+        pulse_desktop_core::mac_keychain::delete(SERVICE, CURRENT);
+        // Older builds' items may sit in another Keychain partition: remove them only if that needs no prompt.
+        let quiet = security_framework::os::macos::keychain::SecKeychain::disable_user_interaction().ok();
+        for entry in OLDER { if let Ok(e) = keyring::Entry::new(SERVICE, entry) { let _ = e.delete_credential(); } }
+        drop(quiet);
+    }
+    #[cfg(windows)]
+    { if let Ok(e) = keyring::Entry::new(SERVICE, CURRENT) { let _ = e.delete_credential(); } }
+}
+
+/// Hosted proof that an updated build reads the saved sign-in without a Keychain prompt (see acceptance.rs).
+pub fn keychain_acceptance(op: &str) -> Value {
+    let synthetic = Tokens { base: "https://acceptance.invalid/api/native/v0".into(), access_token: "a".repeat(43), refresh_token: "r".repeat(43), device_id: "00000000-0000-4000-8000-000000000000".into(), person_name: "Acceptance runner".into() };
+    match op {
+        "write" => json!({"stored": save_tokens(&synthetic).is_ok()}),
+        // An item in the app's own Keychain partition, as builds before 1.0.1 stored it.
+        #[cfg(target_os = "macos")]
+        "write-legacy" => json!({"stored": keyring::Entry::new(SERVICE, "companion-device-v2").and_then(|e| e.set_password(&serde_json::to_string(&synthetic).unwrap_or_default())).is_ok()}),
+        #[cfg(target_os = "macos")]
+        "read-legacy" => {
+            let quiet = security_framework::os::macos::keychain::SecKeychain::disable_user_interaction().ok();
+            let found = match keyring_lookup("companion-device-v2") { Lookup::Found(_) => "found", Lookup::Missing => "missing", Lookup::Unreadable => "unreadable" };
+            drop(quiet);
+            json!({"read": found, "promptsDisabled": true})
+        }
+        "read" => {
+            #[cfg(target_os = "macos")]
+            let quiet = security_framework::os::macos::keychain::SecKeychain::disable_user_interaction().ok();
+            #[cfg(any(windows, target_os = "macos"))]
+            let found = match lookup(CURRENT) { Lookup::Found(t) => if t.device_id == synthetic.device_id { "found" } else { "other" }, Lookup::Missing => "missing", Lookup::Unreadable => "unreadable" };
+            #[cfg(not(any(windows, target_os = "macos")))]
+            let found = "unsupported";
+            #[cfg(target_os = "macos")]
+            drop(quiet);
+            json!({"read": found, "promptsDisabled": cfg!(target_os = "macos")})
+        }
+        "clear" => { forget_tokens(); json!({"cleared": true}) }
+        _ => json!({"error": "unknown operation"}),
+    }
+}
+
 // Other systems keep the credential for this run only.
 #[cfg(not(any(windows, target_os = "macos")))]
-fn load_tokens() -> Option<Tokens> { None }
+fn load_tokens() -> (Option<Tokens>, Option<&'static str>) { (None, None) }
 #[cfg(not(any(windows, target_os = "macos")))]
 fn save_tokens(_t: &Tokens) -> Result<(), CallError> { Ok(()) }
 #[cfg(not(any(windows, target_os = "macos")))]
@@ -107,16 +191,20 @@ impl Companion {
             .user_agent(format!("PulseCompanion/{} ({})", env!("CARGO_PKG_VERSION"), platform()))
             .build()
             .expect("HTTP client");
-        Self { client, tokens: DeferredCredentials::default(), refresh: Mutex::new(()), pairing: Mutex::new(None), two_step: Mutex::new(None) }
+        Self { client, tokens: DeferredCredentials::default(), refresh: Mutex::new(()), pairing: Mutex::new(None), two_step: Mutex::new(None), notice: Mutex::new(None) }
     }
 
-    pub fn restore_saved_session(&self) { self.tokens.finish_restore(load_tokens()); }
+    pub fn restore_saved_session(&self) {
+        let (tokens, notice) = load_tokens();
+        *self.notice.lock().unwrap() = notice;
+        self.tokens.finish_restore(tokens);
+    }
 
     pub fn session(&self) -> Value {
         if self.tokens.is_restoring() { return json!({"signedIn":false,"restoring":true,"base":DEFAULT_BASE,"site":site(DEFAULT_BASE)}); }
         match self.tokens.lock().unwrap().as_ref() {
             Some(t) => json!({"signedIn": true, "base": t.base, "site": site(&t.base), "personName": t.person_name, "deviceId": t.device_id}),
-            None => json!({"signedIn": false, "base": DEFAULT_BASE, "site": site(DEFAULT_BASE)}),
+            None => json!({"signedIn": false, "base": DEFAULT_BASE, "site": site(DEFAULT_BASE), "notice": *self.notice.lock().unwrap()}),
         }
     }
     pub fn base(&self) -> String { self.tokens.lock().unwrap().as_ref().map(|t| t.base.clone()).unwrap_or_else(|| DEFAULT_BASE.into()) }
@@ -171,6 +259,7 @@ impl Companion {
         Ok(next)
     }
     fn store(&self, t: Tokens) -> Result<Value, CallError> {
+        *self.notice.lock().unwrap() = None;
         let mut live=self.tokens.lock().unwrap();
         self.tokens.invalidate_restore();
         save_tokens(&t)?;

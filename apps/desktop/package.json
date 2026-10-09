@@ -1,13 +1,13 @@
 {
   "name": "@pulse/desktop",
   "private": true,
-  "version": "0.3.4",
+  "version": "1.0.0",
   "type": "module",
   "scripts": {
     "build": "node build.mjs",
     "tauri": "tauri",
     "test": "node --test --test-concurrency=2 tests/build-metadata.test.mjs tests/panel.test.mjs && node tests/accessibility.test.js",
-    "screenshots": "node scripts/capture-ui-screenshots.mjs && node scripts/capture-panel.mjs",
+    "screenshots": "node scripts/capture-panel.mjs && node scripts/capture-settings.mjs",
     "icons": "node scripts/make-icons.mjs && tauri icon src-tauri/icons/source-1024.png -o src-tauri/icons"
   },
   "devDependencies": {

@@ -76,6 +76,24 @@ jobs:
           Capture 'windows-tray-panel-click'
           @{buildRun=$env:BUILD_RUN;buildCommit=$run.head_sha;artifactName=$env:ARTIFACT_NAME;installerSha256=$hash;installed=$true;shortcutHide=$true;trayIconFound=$true;trayClickOpened=$true} | ConvertTo-Json | Set-Content screens/acceptance.json
           Stop-Process -Id $app.Id -Force
+      - name: A real Windows toast from the installed app, through its registered identity
+        continue-on-error: true
+        shell: powershell
+        run: |
+          $proof = Join-Path $env:RUNNER_TEMP 'ping-proof'; New-Item -ItemType Directory -Force $proof | Out-Null
+          $env:PULSE_ACCEPTANCE_DIR = $proof
+          $ping = Start-Process 'C:\PulseAcceptance\pulse-desktop.exe' -ArgumentList '--ping-acceptance' -PassThru
+          Start-Sleep -Seconds 4
+          Add-Type -AssemblyName System.Windows.Forms,System.Drawing
+          $b=[System.Windows.Forms.Screen]::PrimaryScreen.Bounds;$bmp=New-Object System.Drawing.Bitmap $b.Width,$b.Height
+          $g=[System.Drawing.Graphics]::FromImage($bmp);$g.CopyFromScreen($b.Location,[System.Drawing.Point]::Empty,$b.Size);$bmp.Save("screens/windows-installed-toast.png",[System.Drawing.Imaging.ImageFormat]::Png)
+          $ping.WaitForExit(30000) | Out-Null
+          [Windows.UI.Notifications.ToastNotificationManager, Windows.UI.Notifications, ContentType = WindowsRuntime] | Out-Null
+          $history = @([Windows.UI.Notifications.ToastNotificationManager]::History.GetHistory('com.pulse.work')).Count
+          $setting = "$([Windows.UI.Notifications.ToastNotificationManager]::CreateToastNotifier('com.pulse.work').Setting)"
+          $receipt = Get-Content (Join-Path $proof 'ping.json') -Raw | ConvertFrom-Json
+          @{installed=$true; shown=$receipt.shown; error=$receipt.error; permission=$receipt.permission; historyCount=$history; setting=$setting} | ConvertTo-Json | Set-Content screens/windows-installed-toast.json
+          if ($history -lt 1 -or $setting -ne 'Enabled') { throw "Toast not delivered: history $history, setting $setting" }
       - uses: actions/upload-artifact@v7
         if: always()
         with: {name: 'windows-tray-diagnostics-${{ github.run_id }}', path: screens/, if-no-files-found: error}
