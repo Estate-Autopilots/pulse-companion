@@ -91,7 +91,8 @@ pub fn start(app: AppHandle) {
         if !c.consent { continue; }
         let w = current_wifi();
         let due = {
-            let sent = app.state::<Presence>().sent.lock().unwrap();
+            let presence = app.state::<Presence>();
+            let sent = presence.sent.lock().unwrap();
             sent.as_ref().map_or(true, |(at, ssid)| at.elapsed() >= Duration::from_secs(90) || *ssid != w.ssid)
         };
         if !due { continue; }

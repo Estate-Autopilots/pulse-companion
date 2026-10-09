@@ -335,10 +335,12 @@ fn set_tray(app: AppHandle, text: String, tone: String, title: String) {
     let _ = tray.set_tooltip(Some(title.chars().take(120).collect::<String>()));
 }
 
-#[tauri::command]
-pub(crate) fn notify(app: AppHandle, title: String, body: String) -> Result<(), String> {
+/// A local notification (reminders, finished downloads).
+pub(crate) fn notify_now(app: &AppHandle, title: &str, body: &str) -> Result<(), String> {
     app.notification().builder().title(title.chars().take(80).collect::<String>()).body(body.chars().take(200).collect::<String>()).show().map_err(|_| "Notifications are turned off for Pulse".to_string())
 }
+#[tauri::command]
+fn notify(app: AppHandle, title: String, body: String) -> Result<(), String> { notify_now(&app, &title, &body) }
 
 #[tauri::command]
 fn autostart_get(app: AppHandle) -> bool { app.autolaunch().is_enabled().unwrap_or(false) }

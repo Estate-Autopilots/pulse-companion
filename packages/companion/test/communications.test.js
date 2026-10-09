@@ -34,3 +34,30 @@ test('click target accepts only conversation deep links',()=>{
  const id='11111111-1111-4111-8111-111111111111';assert.equal(conversationTarget(`/chats?channel=${id}`),id);
  assert.equal(conversationTarget('/me'),null);assert.equal(conversationTarget('/chats?channel=bad'),null);
 });
+import {initials,shortTime,dayLabel,inboxGroups,primaryAction,visibleConversations,hueOf} from '../src/communications.js';
+import {dayText,hm} from '../src/features.js';
+test('avatars use two initials and a stable colour per name',()=>{
+ assert.equal(initials('Asha Rao'),'AR');assert.equal(initials('pod-2'),'P2');assert.equal(initials(''),'?');assert.equal(initials('Mira Kapoor Singh'),'MS');
+ assert.equal(hueOf('Leadership'),hueOf('Leadership'));
+});
+test('times read like a messenger: now, minutes, hours, yesterday, weekday, date',()=>{
+ const now=Date.parse('2026-10-09T12:00:00');
+ assert.equal(shortTime('2026-10-09T11:59:40',now),'now');assert.equal(shortTime('2026-10-09T11:45:00',now),'15m');assert.equal(shortTime('2026-10-09T09:00:00',now),'3h');
+ assert.equal(shortTime('2026-10-08T09:00:00',now),'Yesterday');assert.equal(dayLabel('2026-10-09T08:00:00',now),'Today');assert.equal(dayLabel('2026-10-08T08:00:00',now),'Yesterday');
+});
+test('the inbox groups Needs you, Mentions and Updates with one action each',()=>{
+ const g=inboxGroups([{kind:'decision'},{kind:'approval'},{kind:'mention'},{kind:'reply'},{kind:'holiday'}]);
+ assert.deepEqual(g.map(x=>[x.title,x.items.length]),[['Needs you',1],['Mentions',2],['Updates',2]]);
+ assert.equal(primaryAction({kind:'approval'}),'Review');assert.equal(primaryAction({kind:'mention'}),'Reply');assert.equal(primaryAction({kind:'policy'}),'Read');assert.equal(primaryAction({kind:'holiday'}),'View');
+ assert.deepEqual(inboxGroups([]),[]);
+});
+test('each conversation appears once: mirrors are hidden, pinned first, newest first',()=>{
+ const c=[{id:'a',name:'Leadership',lastAt:'2026-10-09T10:00:00Z'},{id:'b',name:'Leadership',lastAt:null,duplicateOf:'a'},{id:'c',name:'Pod 2',lastAt:'2026-10-09T11:00:00Z'},{id:'d',name:'Ops',lastAt:null,moderationOnly:true}];
+ const v=visibleConversations(c,['a']);assert.deepEqual(v.pinned.map(x=>x.id),['a']);assert.deepEqual(v.recent.map(x=>x.id),['c']);
+});
+test('your day is written in plain words and shared only as that text',()=>{
+ const d={checkedInAt:'2026-10-09T04:22:00Z',checkedOutAt:null,workedMinutes:492,breakMinutes:35,office:'EA Studio',deliveries:3,focus:[{tool:'Premiere',minutes:250}]};
+ const t=dayText(d,new Date('2026-10-09T12:00:00Z'));
+ assert.match(t,/^My day, /);assert.match(t,/\(EA Studio\), 8h 12m worked, 35 min on breaks, 3 deliveries\./);assert.match(t,/Focus: Premiere 4h 10m\./);
+ assert.equal(hm(45),'45 min');assert.equal(hm(120),'2h');assert.equal(dayText(null),'');
+});

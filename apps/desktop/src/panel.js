@@ -6,6 +6,7 @@ import { UpdateController, canOfferUpdate } from './companion/updates.js';
 import { updateCard } from './companion/update-card.js';
 import { mountCommunications } from './companion/communications.js';
 import { mountPanel, renderConnect } from './companion/panel.js';
+import { mountFeatures } from './companion/features.js';
 import { applyTheme, store } from './prefs.js';
 import { DEMO_CONVERSATION, demoCall, demoSnapshot } from './demo-comms.js';
 
@@ -29,7 +30,14 @@ const communications = mountCommunications(root, {
     { id: 'hide', label: 'Hide', icon: 'hide', onClick: () => void invoke('panel_hide') },
   ],
 });
-const panel = mountPanel(communications.todayHost, {
+// Today: the day card, then late-mark protection, "your day" and the time wallet.
+const panelHost = document.createElement('div'), featuresHost = document.createElement('div');
+communications.todayHost.append(panelHost, featuresHost);
+const features = mountFeatures(featuresHost, {
+  call: (path, body) => state.demo ? demoCall(path, body) : invoke('companion_request', { path, body: body ?? null }).catch((e) => { throw failure(e); }),
+  onOpen: (href) => void invoke('open_pulse', { path: href }),
+});
+const panel = mountPanel(panelHost, {
   onAction: (id) => void act(id),
   onMode: (mode) => { state.mode = mode; store.set('mode', mode); render(); },
   onOpen: (href) => void invoke('open_pulse', { path: href }),
@@ -127,6 +135,7 @@ async function refresh() {
   }
   state.syncing = false;
   render(); tray(); remind();
+  if (state.payload) void features.refresh(state.payload.state).then(fit);
   void updates.poll(updateContext());
 }
 async function flush() {
@@ -161,7 +170,7 @@ async function act(id) {
       state.queue = enqueue(state.queue, id, at, extra); store.set('queue', state.queue);
       state.status = { text: 'Saved on this computer · Pulse will catch up when it can', tone: 'success' };
     } else { state.payload = before; state.status = { text: f.message, tone: 'warning' }; }
-  } finally { state.busy = false; render(); tray(); }
+  } finally { state.busy = false; render(); tray(); if (state.payload) void features.refresh(state.payload.state).then(fit); }
 }
 function tray() {
   const p = state.queue.length && state.payload ? projected(state.payload, state.queue) : state.payload;

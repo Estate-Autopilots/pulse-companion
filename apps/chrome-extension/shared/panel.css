@@ -207,3 +207,17 @@
   .pc-enter, .pc-chip i, .pc-empty, .pc-bubble, .pc-banner { animation: none !important; }
   .pc-btn, .pc-tab, .pc-mode, .pc-row, .pc-send, .pc-pin { transition: none; }
 }
+
+/* Features under the Today card: late-mark protection, your day, and the time wallet. */
+.pc-features { display: grid; gap: 8px; padding: 0 16px 16px; }
+.pc-features:empty { display: none; }
+.pc-feature { display: grid; gap: 8px; padding: 12px 16px; border-radius: 14px; background: var(--pc-subtle); animation: pc-fade .2s ease-out both; }
+.pc-feature-late { background: color-mix(in srgb, var(--pc-success) 10%, var(--pc-surface)); }
+.pc-feature-title { margin: 0; font-size: 12px; font-weight: 650; letter-spacing: .02em; color: var(--pc-muted); }
+.pc-feature-text { margin: 0; font-size: 13px; line-height: 1.45; }
+.pc-feature-btn { justify-self: start; min-height: 32px; padding: 0 12px; border-radius: 10px; font-size: 12.5px; }
+.pc-wallet { display: flex; flex-wrap: wrap; gap: 6px; }
+.pc-wallet-chip { min-height: 28px; padding: 0 10px; border: 1px solid var(--pc-border); border-radius: 999px; background: var(--pc-surface); color: var(--pc-text); font: inherit; font-size: 12px; font-weight: 560; cursor: pointer; transition: background .15s; }
+.pc-wallet-chip:hover { background: var(--pc-hover); }
+.pc-wallet-chip:focus-visible { outline: 2px solid var(--pc-focus); outline-offset: 2px; }
+@media (prefers-reduced-motion: reduce) { .pc-feature { animation: none; } }

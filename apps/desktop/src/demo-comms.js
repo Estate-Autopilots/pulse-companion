@@ -33,7 +33,15 @@ const inbox = [
 export function demoSnapshot() {
   return { person: { id: ME, name: 'You (demo)' }, counts: { inbox: inbox.filter((r) => !r.readAt).length, chats: channels.reduce((n, c) => n + c.unread, 0), total: 6 }, rows: [] };
 }
+const wallet = {
+  wallet: { balances: [{ key: 'casual', label: 'Casual', available: 4.5, pending: 0 }, { key: 'sick', label: 'Sick', available: 6, pending: 0 }, { key: 'comp_off', label: 'Comp-off', available: 1, pending: 0 }],
+    nextHoliday: { day: new Date(Date.now() + 9 * 86400000).toISOString().slice(0, 10), name: 'Dussehra' }, month: { present: 7, late: 1, extraMinutes: 200 } },
+  day: { checkedInAt: minutes(60 * 3 + 5), checkedOutAt: null, workedMinutes: 165, breakMinutes: 20, office: 'EA Studio', deliveries: 2, focus: [{ tool: 'Premiere', minutes: 95 }], manager: { id: people[1].id, name: 'Mira Kapoor' } },
+  late: { minutes: 7, checkedInAt: minutes(60 * 3 + 5), arrivedAt: minutes(60 * 3 + 18), office: 'EA Studio', device: 'laptop', disputable: true, pending: false },
+};
 export async function demoCall(path, body) {
+  if (path === 'companion/wallet') return wallet;
+  if (path === 'companion/late-dispute') { wallet.late.pending = true; wallet.late.disputable = false; return { status: 'pending' }; }
   if (path === 'chats') return { channels, people, viewer: ME };
   if (path === 'companion/inbox') return { rows: inbox };
   if (path === 'companion/read') { const row = inbox.find((r) => r.id === body?.id); if (row) row.readAt = new Date().toISOString(); return { ok: true }; }

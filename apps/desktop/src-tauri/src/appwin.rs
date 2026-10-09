@@ -243,8 +243,8 @@ fn exchange(app: &AppHandle, win: &WebviewWindow, site: &url::Url) -> Result<(),
 fn navigation(app: &AppHandle, url: &url::Url) -> bool {
     if is_local(url) { return true; }
     if url.scheme() == "pulse" { crate::deep_link(app, url.as_str()); return false; }
-    let site = site(app);
-    if same_site(url, &site) {
+    let origin = site(app);
+    if same_site(url, &origin) {
         // Landing on /login while this computer is paired: sign the window in again (expired or revoked cookie),
         // unless that just happened, which means the person chose to sign out of the window.
         if url.path() == "/login" && app.state::<Companion>().session()["signedIn"].as_bool().unwrap_or(false) {
@@ -295,7 +295,7 @@ fn download(app: &AppHandle, event: DownloadEvent<'_>) -> bool {
         DownloadEvent::Finished { success, path, .. } => {
             if success {
                 let what = path.as_ref().and_then(|p| p.file_name()).map(|n| n.to_string_lossy().to_string()).unwrap_or_else(|| "Your file".into());
-                let _ = crate::notify(app.clone(), "Download finished".into(), format!("{what} is in your Downloads folder."));
+                let _ = crate::notify_now(app, "Download finished", &format!("{what} is in your Downloads folder."));
             }
             true
         }
