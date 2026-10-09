@@ -205,7 +205,9 @@ TEST_APK="$(dirname "$NEW")/$(basename "$NEW" .apk | sed 's/-android$/-android-t
 [ -f "$TEST_APK" ] || { echo "Missing matching-source Android surface test APK" >&2; exit 1; }
 adb install -r "$TEST_APK"
 # A disposable instrumented host exercises the actual AppWidgetManager/RemoteViews; no manifest permission is added.
-adb shell appwidget grantbind --package "$PKG" --user current
+R21_WIDGET_USER=$(adb shell am get-current-user | tr -d '\r')
+[[ "$R21_WIDGET_USER" =~ ^[0-9]+$ ]]
+adb shell appwidget grantbind --package "$PKG" --user "$R21_WIDGET_USER"
 for permission in granted denied; do
   if [ "$permission" = granted ]; then adb shell pm grant $PKG android.permission.POST_NOTIFICATIONS; else adb shell pm revoke $PKG android.permission.POST_NOTIFICATIONS; fi
   adb shell am instrument -w "$PKG.test/androidx.test.runner.AndroidJUnitRunner" > "$OUT/r21-native-$permission.txt"
@@ -215,7 +217,7 @@ for permission in granted denied; do
   adb pull "/sdcard/Android/data/$PKG/files/r21-widget.png" "$OUT/r21-widget-$permission.png"
   pass "r21_native_surfaces_$permission" "6 synthetic native tests; no staff sign-in or attendance transport"
 done
-adb shell appwidget revokebind --package "$PKG" --user current
+adb shell appwidget revokebind --package "$PKG" --user "$R21_WIDGET_USER"
 adb shell am force-stop $PKG
 adb shell am start -W -n "$ACT" --es pulse.href /me >/dev/null
 wait_text "$SIGNIN" 120

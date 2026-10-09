@@ -47,8 +47,9 @@ final class AttendanceSurfaces {
     }
     static PendingIntent tap(Context c, String action) {
         Intent open = new Intent(c, MainActivity.class).setAction("pulse.surface." + action)
-            .putExtra(MainActivity.EXTRA_HREF, "/me").putExtra(EXTRA_ACTION, action).putExtra(EXTRA_NONCE, nonce(c))
+            .putExtra(MainActivity.EXTRA_HREF, "/me").putExtra(EXTRA_ACTION, action)
             .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK | Intent.FLAG_ACTIVITY_SINGLE_TOP);
+        if (!"open".equals(action)) open.putExtra(EXTRA_NONCE, nonce(c));
         return PendingIntent.getActivity(c, 2100 + action.hashCode(), open, PendingIntent.FLAG_IMMUTABLE | PendingIntent.FLAG_UPDATE_CURRENT);
     }
     /** External links/extras cannot create a pending attendance intent without this installation's sealed nonce. */
@@ -103,15 +104,15 @@ final class AttendanceSurfaces {
     }
     static void clearPending(Context c) { ShellStore.put(c, PENDING, "{}"); }
     static boolean ribbon(Context c) { return "on".equals(ShellStore.get(c, RIBBON)); }
-    static void chooseRibbon(Context c, boolean enabled) {
+    static synchronized void chooseRibbon(Context c, boolean enabled) {
         ShellStore.put(c, RIBBON, enabled ? "on" : "off"); render(c);
     }
-    static void clear(Context c) {
+    static synchronized void clear(Context c) {
         NotificationManagerCompat.from(c).cancel(NOTIFICATION);
         renderWidget(c);
     }
     static void render(Context c) { renderWidget(c); renderRibbon(c); }
-    static void renderWidget(Context c) {
+    static synchronized void renderWidget(Context c) {
         JSONObject s = read(c);
         AppWidgetManager manager = AppWidgetManager.getInstance(c);
         int[] ids = manager.getAppWidgetIds(new ComponentName(c, AttendanceWidget.class));
@@ -138,7 +139,7 @@ final class AttendanceSurfaces {
         NotificationChannel channel = c.getSystemService(NotificationManager.class).getNotificationChannel(CHANNEL);
         return channel == null || channel.getImportance() != NotificationManager.IMPORTANCE_NONE;
     }
-    static void renderRibbon(Context c) {
+    static synchronized void renderRibbon(Context c) {
         NotificationManagerCompat manager = NotificationManagerCompat.from(c);
         JSONObject s = read(c);
         if (!ribbon(c) || !ribbonAllowed(c) || !fresh(c, s)) { manager.cancel(NOTIFICATION); return; }
