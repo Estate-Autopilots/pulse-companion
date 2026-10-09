@@ -100,7 +100,12 @@ pub async fn update_install(app: AppHandle, safe: bool) -> Result<(), String> {
 }
 #[tauri::command]
 pub fn update_healthy(app: AppHandle) -> Result<Value, String> {
-    let path = journal_path(&app)?;
+    let result = record_startup_health(&app);
+    super::start_secure_stores(&app);
+    result
+}
+fn record_startup_health(app: &AppHandle) -> Result<Value, String> {
+    let path = journal_path(app)?;
     let Ok(mut j) = Journal::load(&path) else { return Ok(Value::Null) };
     if j.acknowledge(env!("CARGO_PKG_VERSION")) { j.save(&path).map_err(err)?; }
     let result = json!({"stage":j.stage,"version":env!("CARGO_PKG_VERSION"),"attempts":j.attempts,"processId":std::process::id()});

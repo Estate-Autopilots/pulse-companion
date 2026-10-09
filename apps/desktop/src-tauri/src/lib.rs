@@ -1,15 +1,16 @@
 mod companion;
+mod pings;
 mod updater;
 use updater::{update_check, update_prepare, update_install, update_healthy, Updates, Gate};
 
 use companion::Companion;
 use pulse_desktop_core::{
-    tracker::{Settings, Status, Tracker},
+    tracker::{Settings, Tracker},
     AgentCore, AgentStatus,
 };
 use serde_json::Value;
 use std::{
-    sync::Mutex,
+    sync::{Mutex, atomic::{AtomicBool, Ordering}},
     thread,
     time::{Duration, Instant},
 };
@@ -40,6 +41,40 @@ struct Anchor {
     hidden_at: Option<Instant>,
     shown_at: Option<Instant>,
     pinned: bool,
+}
+
+#[derive(Default)]
+struct SecureStartup { started: AtomicBool, tracker_issue: Mutex<Option<String>> }
+
+// A Keychain approval is an OS permission wait, not an app startup failure.
+// Start these only after the real WebView has rendered and acknowledged its health.
+fn start_secure_stores(app: &AppHandle) {
+    if app.state::<SecureStartup>().started.swap(true, Ordering::SeqCst) { return; }
+    let session_app = app.clone();
+    tauri::async_runtime::spawn_blocking(move || session_app.state::<Companion>().restore_saved_session());
+    let tracker_app = app.clone();
+    tauri::async_runtime::spawn_blocking(move || {
+        let opened = tracker_app.path().app_local_data_dir().map_err(|_| "Pulse could not open saved work settings".to_string())
+            .and_then(|path| Tracker::open(path.join("native-tracker.bin")));
+        match opened {
+            Ok(tracker) => {
+                let core = tracker_app.state::<AgentCore>().inner().clone();
+                if tracker.status(&core).paused { core.set_pause("until-resumed").ok(); }
+                tracker_app.manage(tracker.clone());
+                let sync_core = core.clone();
+                let _ = thread::Builder::new().name("pulse-ingest".into()).spawn(move || loop { let _ = sync_core.sync_once(); thread::sleep(Duration::from_secs(15)); });
+                let (bridge_tracker, bridge_core) = (tracker.clone(), core.clone());
+                let _ = thread::Builder::new().name("pulse-adobe-bridge".into()).spawn(move || { let _ = pulse_desktop_core::bridge::serve(bridge_tracker, bridge_core); });
+                let _ = thread::Builder::new().name("pulse-sensors".into()).spawn(move || loop { let _ = tracker.tick(&core); thread::sleep(Duration::from_secs(5)); });
+            }
+            Err(issue) => { *tracker_app.state::<SecureStartup>().tracker_issue.lock().unwrap() = Some(issue); }
+        }
+    });
+}
+
+fn ready_tracker(app: &AppHandle) -> Result<Tracker, String> {
+    app.try_state::<Tracker>().map(|tracker| tracker.inner().clone())
+        .ok_or_else(|| "Your saved work settings are still protected by the OS. Allow Pulse in the system permission prompt, then try again.".into())
 }
 
 // ------------------------------------------------------------------------------------------------ the panel
@@ -84,7 +119,7 @@ fn show_panel(app: &AppHandle) {
 
 fn hide_panel(app: &AppHandle) {
     if let Some(win) = panel(app) {
-        let _ = win.hide();
+        let _=win.eval("window.pulsePanel?.hidden?.()");let _ = win.hide();
         app.state::<Mutex<Anchor>>().lock().unwrap().hidden_at = Some(Instant::now());
     }
 }
@@ -128,7 +163,7 @@ fn companion_session(state: State<'_, Companion>) -> Value { state.session() }
 
 #[tauri::command]
 async fn companion_request(app: AppHandle, path: String, body: Option<Value>) -> Result<Value, String> {
-    if !path.chars().all(|c| c.is_ascii_alphanumeric() || "/-?=&".contains(c)) { return Err(companion::CallError::default().text()); }
+    if !path.chars().all(|c| c.is_ascii_alphanumeric() || "/-?=&%:._".contains(c)) { return Err(companion::CallError::default().text()); }
     {
         let gate_state = app.state::<Gate>(); let mut gate = gate_state.0.lock().unwrap();
         if gate.1 { return Err("Pulse is installing an update. Try again after restart.".into()); }
@@ -142,11 +177,14 @@ async fn companion_request(app: AppHandle, path: String, body: Option<Value>) ->
 }
 
 #[tauri::command]
-async fn companion_pair_start(app: AppHandle, base: String) -> Result<Value, String> {
+async fn companion_pair_start(app: AppHandle, base: String, expected_person: Option<String>) -> Result<Value, String> {
     let started = tauri::async_runtime::spawn_blocking(move || app.state::<Companion>().pair_start(&base).map_err(err))
         .await
         .map_err(|_| "{\"message\":\"Pulse request interrupted\"}".to_string())??;
-    if let Some(url) = started["verifyUrl"].as_str() { let _ = open_url(url); }
+    if let Some(url) = started["verifyUrl"].as_str() {
+        let target=expected_person.filter(|s|s.len()==36&&s.chars().all(|c|c.is_ascii_hexdigit()||c=='-')).map(|p|format!("{url}&expected={p}")).unwrap_or_else(||url.to_string());
+        let _ = open_url(&target);
+    }
     Ok(started)
 }
 
@@ -206,8 +244,16 @@ fn panel_pin(app: AppHandle, pinned: bool) { app.state::<Mutex<Anchor>>().lock()
 #[tauri::command]
 fn set_tray(app: AppHandle, text: String, tone: String, title: String) {
     let Some(tray) = app.tray_by_id("pulse") else { return };
+    let (text,tone,title)=if title=="Pulse"&&text.is_empty()&&tone=="neutral"{
+        app.state::<pings::Pings>().tray.lock().unwrap().clone()
+    }else{
+        *app.state::<pings::Pings>().tray.lock().unwrap()=(text.clone(),tone.clone(),title.clone());
+        (text,tone,title)
+    };
+    let unread=pings::unread(&app);
     #[cfg(target_os = "macos")]
     {
+        let text=if unread>0{unread.to_string()}else{text};
         let _ = tray.set_title(if text.is_empty() { None } else { Some(text.chars().take(8).collect::<String>()) });
         let _ = tone;
     }
@@ -215,8 +261,9 @@ fn set_tray(app: AppHandle, text: String, tone: String, title: String) {
     {
         let _ = &text;
         let bytes = match tone.as_str() { "success" => ICON_IN, "info" => ICON_BREAK, "warning" => ICON_ALERT, _ => ICON_IDLE };
-        if let Ok(icon) = Image::from_bytes(bytes) { let _ = tray.set_icon(Some(icon)); }
+        if let Ok(icon) = Image::from_bytes(bytes) { let _ = tray.set_icon(Some(if unread>0{pings::badge_icon(icon,unread)}else{icon})); }
     }
+    let title=if unread>0{format!("Pulse · {unread} unread")}else{title};
     let _ = tray.set_tooltip(Some(title.chars().take(120).collect::<String>()));
 }
 
@@ -248,24 +295,32 @@ fn open_privacy(app: AppHandle) { show_privacy(&app); }
 fn agent_status(state: State<'_, AgentCore>) -> AgentStatus { state.status() }
 
 #[tauri::command]
-fn tracker_status(state: State<'_, Tracker>, core: State<'_, AgentCore>) -> Status { state.status(&core) }
+fn tracker_status(app: AppHandle, core: State<'_, AgentCore>) -> Value {
+    match ready_tracker(&app) {
+        Ok(tracker) => serde_json::to_value(tracker.status(&core)).unwrap_or(Value::Null),
+        Err(waiting) => {
+            let issue = app.state::<SecureStartup>().tracker_issue.lock().unwrap().clone().unwrap_or(waiting);
+            serde_json::json!({"configured":false,"connected":false,"personName":"","paused":true,"captureEnd":"","queued":0,"seen":[],"issue":issue,"breakWarning":null,"purposes":[],"deviceId":"","folders":[]})
+        }
+    }
+}
 #[tauri::command]
 async fn tracker_configure(app: AppHandle, settings: Settings) -> Result<(), String> {
-    let tracker = app.state::<Tracker>().inner().clone();
+    let tracker = ready_tracker(&app)?;
     tauri::async_runtime::spawn_blocking(move || tracker.configure(settings))
         .await
         .map_err(|_| "Native request interrupted".to_string())?
 }
 #[tauri::command]
 async fn tracker_login(app: AppHandle, api: String, username: String, password: String) -> Result<Value, String> {
-    let tracker = app.state::<Tracker>().inner().clone();
+    let tracker = ready_tracker(&app)?;
     tauri::async_runtime::spawn_blocking(move || tracker.login(api, username, password))
         .await
         .map_err(|_| "Native request interrupted".to_string())?
 }
 #[tauri::command]
 async fn tracker_verify_login(app: AppHandle, api: String, challenge: String, code: String) -> Result<Value, String> {
-    let tracker = app.state::<Tracker>().inner().clone();
+    let tracker = ready_tracker(&app)?;
     tauri::async_runtime::spawn_blocking(move || tracker.verify_login(api, challenge, code))
         .await
         .map_err(|_| "Native request interrupted".to_string())?
@@ -275,18 +330,18 @@ fn tracker_open_recovery(state: State<'_, Companion>) -> Result<(), String> {
     open_url(&format!("{}/login", companion::site(&state.base())))
 }
 #[tauri::command]
-fn tracker_pause(state: State<'_, Tracker>, core: State<'_, AgentCore>, paused: bool) -> Result<(), String> {
-    state.pause(paused)?;
+fn tracker_pause(app: AppHandle, core: State<'_, AgentCore>, paused: bool) -> Result<(), String> {
+    ready_tracker(&app)?.pause(paused)?;
     core.set_pause(if paused { "until-resumed" } else { "resume" })?;
     Ok(())
 }
 #[tauri::command]
-fn bridge_info(state: State<'_, Tracker>) -> Value {
-    serde_json::json!({"url":"http://127.0.0.1:47831/commands","token":state.bridge_token()})
+fn bridge_info(app: AppHandle) -> Result<Value, String> {
+    Ok(serde_json::json!({"url":"http://127.0.0.1:47831/commands","token":ready_tracker(&app)?.bridge_token()}))
 }
 #[tauri::command]
 async fn tracker_sign_out(app: AppHandle) -> Result<(), String> {
-    let tracker = app.state::<Tracker>().inner().clone();
+    let tracker = ready_tracker(&app)?;
     tauri::async_runtime::spawn_blocking(move || tracker.sign_out())
         .await
         .map_err(|_| "Native request interrupted".to_string())?
@@ -314,6 +369,8 @@ pub fn run() {
                 .build(),
         )
         .manage(Companion::new())
+        .manage(SecureStartup::default())
+        .manage(pings::Pings::default())
         .manage(Mutex::new(Anchor::default()))
         .setup(move |app| {
             #[cfg(target_os = "macos")]
@@ -323,15 +380,6 @@ pub fn run() {
             // Optional activity metadata: starts paused and stays off unless the person accepts the published notice.
             let core = AgentCore::from_environment(local_data_dir.join("outbox.bin")).map_err(std::io::Error::other)?;
             app.manage(core.clone());
-            let tracker = Tracker::open(local_data_dir.join("native-tracker.bin")).map_err(std::io::Error::other)?;
-            if tracker.status(&core).paused { core.set_pause("until-resumed").map_err(std::io::Error::other)?; }
-            app.manage(tracker.clone());
-            let (bridge_tracker, bridge_core) = (tracker.clone(), core.clone());
-            thread::Builder::new().name("pulse-adobe-bridge".into()).spawn(move || { let _ = pulse_desktop_core::bridge::serve(bridge_tracker, bridge_core); })?;
-            let tracker_core = core.clone();
-            thread::Builder::new().name("pulse-sensors".into()).spawn(move || loop { let _ = tracker.tick(&tracker_core); thread::sleep(Duration::from_secs(5)); })?;
-            let sync_core = core.clone();
-            let _ = thread::Builder::new().name("pulse-ingest".into()).spawn(move || loop { let _ = sync_core.sync_once(); thread::sleep(Duration::from_secs(15)); });
 
             // The companion panel: small, frameless, above other windows, out of the taskbar.
             let win = WebviewWindowBuilder::new(app, PANEL, WebviewUrl::App("index.html".into()))
@@ -388,6 +436,7 @@ pub fn run() {
                     _ => {}
                 })
                 .build(app)?;
+            pings::start(app.handle().clone());
             let _ = app.global_shortcut().register(register);
             // Opened by the person (not at sign-in to the computer): say hello once.
             // --pinned keeps the panel open (screenshots on build runners and demos).
@@ -403,6 +452,8 @@ pub fn run() {
             update_healthy,
             companion_session,
             companion_request,
+            pings::companion_ping_state,
+            pings::companion_ping_enable,
             companion_pair_start,
             companion_pair_poll,
             companion_pair_cancel,

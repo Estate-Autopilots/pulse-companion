@@ -5,7 +5,8 @@ name: Pulse Companion builds
 on:
   push:
     branches: [main]
-    paths: ['apps/desktop/**', 'apps/mobile/**', 'apps/chrome-extension/**', 'packages/companion/**', 'packages/design-system/**', 'pnpm-lock.yaml', '.github/workflows/companion-builds.yml']
+    # Every commit on this client-only, guarded export is a release input, including
+    # acceptance workflows and release notes. Channel pointer tags do not push main.
   workflow_dispatch:
     inputs:
       version:

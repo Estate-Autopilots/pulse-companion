@@ -4,6 +4,7 @@ pub mod bridge;
 pub mod release;
 pub mod sensors;
 pub mod tracker;
+pub mod startup;
 use base64::{
     engine::general_purpose::{STANDARD, URL_SAFE_NO_PAD},
     Engine,

@@ -5,6 +5,7 @@ use reqwest::blocking::Client;
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 use std::{sync::Mutex, time::Duration};
+use pulse_desktop_core::startup::DeferredCredentials;
 
 pub const DEFAULT_BASE: &str = "https://pulse.estateautopilots.com/api/native/v0";
 const SERVICE: &str = "com.pulse.work";
@@ -44,7 +45,7 @@ struct TwoStep { base: String, challenge: String }
 
 pub struct Companion {
     client: Client,
-    tokens: Mutex<Option<Tokens>>,
+    tokens: DeferredCredentials<Tokens>,
     refresh: Mutex<()>,
     pairing: Mutex<Option<Pairing>>,
     two_step: Mutex<Option<TwoStep>>,
@@ -106,10 +107,13 @@ impl Companion {
             .user_agent(format!("PulseCompanion/{} ({})", env!("CARGO_PKG_VERSION"), platform()))
             .build()
             .expect("HTTP client");
-        Self { client, tokens: Mutex::new(load_tokens()), refresh: Mutex::new(()), pairing: Mutex::new(None), two_step: Mutex::new(None) }
+        Self { client, tokens: DeferredCredentials::default(), refresh: Mutex::new(()), pairing: Mutex::new(None), two_step: Mutex::new(None) }
     }
 
+    pub fn restore_saved_session(&self) { self.tokens.finish_restore(load_tokens()); }
+
     pub fn session(&self) -> Value {
+        if self.tokens.is_restoring() { return json!({"signedIn":false,"restoring":true,"base":DEFAULT_BASE,"site":site(DEFAULT_BASE)}); }
         match self.tokens.lock().unwrap().as_ref() {
             Some(t) => json!({"signedIn": true, "base": t.base, "site": site(&t.base), "personName": t.person_name, "deviceId": t.device_id}),
             None => json!({"signedIn": false, "base": DEFAULT_BASE, "site": site(DEFAULT_BASE)}),
@@ -139,34 +143,53 @@ impl Companion {
     pub fn request(&self, path: &str, body: Option<Value>) -> Result<Value, CallError> {
         let tokens = self.tokens.lock().unwrap().clone().ok_or_else(CallError::signed_out)?;
         let (mut status, mut data) = self.send(&tokens.base, path, body.as_ref(), Some(&tokens.access_token), None)?;
+        if self.tokens.lock().unwrap().as_ref().map(|t|&t.device_id)!=Some(&tokens.device_id){return Err(self.changed_session());}
         if status == 401 {
             let fresh = self.refreshed(&tokens)?;
             (status, data) = self.send(&fresh.base, path, body.as_ref(), Some(&fresh.access_token), None)?;
-            if status == 401 { self.clear(); return Err(CallError::signed_out()); }
+            if self.tokens.lock().unwrap().as_ref().map(|t|&t.device_id)!=Some(&tokens.device_id){return Err(self.changed_session());}
+            if status == 401 { self.clear_device(&tokens.device_id); return Err(CallError::signed_out()); }
         }
+        if self.tokens.lock().unwrap().as_ref().map(|t|&t.device_id)!=Some(&tokens.device_id){return Err(self.changed_session());}
         if !(200..300).contains(&status) { return Err(Self::fail(status, &data)); }
         Ok(data)
     }
     fn refreshed(&self, used: &Tokens) -> Result<Tokens, CallError> {
         let _one = self.refresh.lock().unwrap();
         let current = self.tokens.lock().unwrap().clone().ok_or_else(CallError::signed_out)?;
+        if current.device_id!=used.device_id {return Err(self.changed_session());}
         if current.access_token != used.access_token { return Ok(current); }
         let (status, data) = self.send(&current.base, "native/refresh", Some(&json!({"refreshToken": current.refresh_token})), None, None)?;
-        let (Some(access), Some(refresh)) = (data["accessToken"].as_str(), data["refreshToken"].as_str()) else { self.clear(); return Err(CallError::signed_out()); };
-        if status != 200 { self.clear(); return Err(CallError::signed_out()); }
-        let next = Tokens { access_token: access.into(), refresh_token: refresh.into(), ..current };
+        if self.tokens.lock().unwrap().as_ref().map(|t|&t.device_id)!=Some(&current.device_id){return Err(self.changed_session());}
+        let (Some(access), Some(refresh)) = (data["accessToken"].as_str(), data["refreshToken"].as_str()) else { self.clear_device(&current.device_id); return Err(CallError::signed_out()); };
+        if status != 200 { self.clear_device(&current.device_id); return Err(CallError::signed_out()); }
+        let next = Tokens { access_token: access.into(), refresh_token: refresh.into(), ..current.clone() };
+        let mut live=self.tokens.lock().unwrap();
+        if !live.as_ref().is_some_and(|t|t.device_id==current.device_id&&t.refresh_token==current.refresh_token){return Err(CallError::signed_out());}
         save_tokens(&next)?;
-        *self.tokens.lock().unwrap() = Some(next.clone());
+        *live = Some(next.clone());
         Ok(next)
     }
     fn store(&self, t: Tokens) -> Result<Value, CallError> {
+        let mut live=self.tokens.lock().unwrap();
+        self.tokens.invalidate_restore();
         save_tokens(&t)?;
-        *self.tokens.lock().unwrap() = Some(t);
+        *live = Some(t);
+        drop(live);
         Ok(self.session())
     }
+    fn changed_session(&self) -> CallError {
+        if self.tokens.lock().unwrap().is_some() {CallError::status(409,"Your Pulse sign-in changed. Try again.")} else {CallError::signed_out()}
+    }
+    fn clear_device(&self, device: &str) {
+        let mut live=self.tokens.lock().unwrap();
+        if live.as_ref().is_some_and(|t|t.device_id==device) {self.tokens.invalidate_restore();forget_tokens();*live=None;}
+    }
     fn clear(&self) {
+        let mut live=self.tokens.lock().unwrap();
+        self.tokens.invalidate_restore();
         forget_tokens();
-        *self.tokens.lock().unwrap() = None;
+        *live = None;
     }
 
     /// Browser sign-in, step 1: a short code the person approves on the Pulse site.

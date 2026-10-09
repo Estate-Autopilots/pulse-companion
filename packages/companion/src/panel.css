@@ -1,6 +1,6 @@
 /* The companion panel: desktop pop-up, Chrome popup and the web widget. Pulse tokens when the page has them
    (web), the same values as fallbacks elsewhere (desktop, Chrome). */
-.pc {
+.pc, .pc-communications {
   --pc-canvas: var(--theme-canvas, #f6f6fa); --pc-surface: var(--theme-surface, #ffffff); --pc-subtle: var(--theme-surface-subtle, #efeff6);
   --pc-text: var(--theme-text, #191a2e); --pc-muted: var(--theme-text-muted, #66687e); --pc-border: var(--theme-border, #dbdce8);
   --pc-action: var(--theme-action, #5b45d6); --pc-action-hover: var(--theme-action-hover, #4a35c0); --pc-action-text: var(--theme-action-text, #ffffff);
@@ -11,14 +11,14 @@
   font-feature-settings: "cv11", "ss03", "calt"; -webkit-font-smoothing: antialiased; text-align: left;
 }
 @media (prefers-color-scheme: dark) {
-  :root:not([data-theme="light"]) .pc {
+  :root:not([data-theme="light"]) .pc, :root:not([data-theme="light"]) .pc-communications {
     --pc-canvas: var(--theme-canvas, #121219); --pc-surface: var(--theme-surface, #1a1a24); --pc-subtle: var(--theme-surface-subtle, #23232f);
     --pc-text: var(--theme-text, #eeeef6); --pc-muted: var(--theme-text-muted, #a7a8bb); --pc-border: var(--theme-border, #31313f);
     --pc-action: var(--theme-action, #a99cff); --pc-action-hover: var(--theme-action-hover, #bdb3ff); --pc-action-text: var(--theme-action-text, #17123a);
     --pc-focus: var(--theme-focus, #b8adff); --pc-success: var(--theme-success, #79c3a5); --pc-warning: var(--theme-warning, #e2b667); --pc-info: var(--theme-info, #8da5ff);
   }
 }
-:root[data-theme="dark"] .pc {
+:root[data-theme="dark"] .pc, :root[data-theme="dark"] .pc-communications {
   --pc-canvas: var(--theme-canvas, #121219); --pc-surface: var(--theme-surface, #1a1a24); --pc-subtle: var(--theme-surface-subtle, #23232f);
   --pc-text: var(--theme-text, #eeeef6); --pc-muted: var(--theme-text-muted, #a7a8bb); --pc-border: var(--theme-border, #31313f);
   --pc-action: var(--theme-action, #a99cff); --pc-action-hover: var(--theme-action-hover, #bdb3ff); --pc-action-text: var(--theme-action-text, #17123a);
@@ -85,3 +85,5 @@
 .pc-update { max-height: 220px; overflow-y: auto; margin: 10px 14px; padding: 12px; border: 1px solid var(--pc-border, #bbb); border-radius: 14px; }
 .pc-update p { margin: 8px 0; overflow-wrap: anywhere; }
 .pc-update .pc-btn { margin: 3px; }
+
+.pc-communications{padding:0;gap:0;font:13px/1.45 var(--pc-font,system-ui);color:var(--pc-text,#202b36)}.pc-identity{display:flex;align-items:center;justify-content:space-between;gap:8px;padding:12px 14px 4px}.pc-identity strong{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}.pc-identity button{font-size:11px}.pc-tabs{display:flex;gap:4px;padding:8px 12px;border-bottom:1px solid var(--pc-border,#ddd)}.pc-tab{flex:1;border:0;border-radius:9px;padding:8px 5px;background:transparent;color:inherit;cursor:pointer}.pc-tab[aria-current=true]{background:var(--pc-subtle,#eee);font-weight:650}.pc-comms-content{padding:10px 14px;max-height:360px;overflow:auto}.pc-comms-content[hidden],.pc-communications [hidden]{display:none}.pc-conversation{display:block;width:100%;padding:11px 4px;text-align:left;background:transparent;border:0;border-bottom:1px solid var(--pc-border,#ddd);color:inherit;cursor:pointer}.pc-inbox-item{padding-bottom:8px}.pc-inbox-item time{display:block}.pc-messages{max-height:240px;overflow:auto}.pc-message{margin:8px 0;padding:8px 10px;background:var(--pc-subtle,#eee);border-radius:10px;overflow-wrap:anywhere}.pc-message p{white-space:pre-wrap;margin:4px 0}.pc-message strong{font-size:11px}.pc-quick-reply{display:flex;flex-wrap:wrap;gap:6px;margin-top:10px}.pc-quick-reply textarea{width:100%;resize:vertical;border:1px solid var(--pc-border,#ddd);background:var(--pc-surface,#fff);color:inherit;border-radius:8px;padding:8px;font:inherit;box-sizing:border-box}.pc-quick-reply p{margin:0}.pc-ping-controls{display:flex;gap:12px;padding:4px 14px}.pc-ping-status{padding:4px 14px 10px;margin:0;font-size:11px;color:var(--pc-muted,#687582)}.pc-ping-prefs{max-height:220px;overflow:auto;padding:8px 14px}.pc-ping-prefs label{display:flex;gap:8px;align-items:center;margin:8px 0}.pc-ping-prefs input[type=text]{width:140px}.pc-muted{font-size:11px;color:var(--pc-muted,#687582)}

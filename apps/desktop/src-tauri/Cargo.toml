@@ -1,6 +1,6 @@
 [package]
 name = "pulse-desktop"
-version = "0.3.2"
+version = "0.3.4"
 description = "Pulse Companion: check in, take a break and check out from the tray"
 authors = ["Estate Autopilots"]
 edition = "2021"
@@ -26,7 +26,10 @@ url = "2"
 pulse-desktop-core = { path = "../core" }
 
 [target.'cfg(windows)'.dependencies]
+tauri-winrt-notification = "=0.8.1"
+windows = { version = "0.62", features = ["UI_Notifications"] }
 keyring = { version = "3", features = ["windows-native"] }
 
 [target.'cfg(target_os = "macos")'.dependencies]
+mac-usernotifications = "=0.3.1"
 keyring = { version = "3", features = ["apple-native"] }

@@ -87,7 +87,7 @@ export const DEFAULT_BASE: string;
 export class GateError extends Error { gate: true }
 export class OfflineError extends Error { offline: true }
 export class ApiError extends Error { status: number; signedOut?: boolean; retryAfter?: number; constructor(status: number, message: string) }
-export function verifyUrl(base: string, code: string): string;
+export function verifyUrl(base: string, code: string, expectedPerson?: string): string;
 export function checkBase(base: string): string;
 export type CompanionClient = {
   base: string;

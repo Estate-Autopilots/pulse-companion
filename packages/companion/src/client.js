@@ -17,9 +17,9 @@ export class ApiError extends Error {
 }
 
 /** The web page where the person approves a pairing code, on the same Pulse site as the gateway. */
-export function verifyUrl(base, code) {
+export function verifyUrl(base, code, expectedPerson) {
   const u = new URL(base);
-  return `${u.origin}/connect?code=${encodeURIComponent(code)}`;
+  return `${u.origin}/connect?code=${encodeURIComponent(code)}${expectedPerson?`&expected=${encodeURIComponent(expectedPerson)}`:''}`;
 }
 
 export function checkBase(base) {
@@ -34,7 +34,7 @@ export function checkBase(base) {
  * tokens: { accessToken, refreshToken, deviceId, person? }
  * credentials: 'include' lets the Chrome extension pass the browser's Access cookie along; native apps omit it.
  */
-export function createClient({ base = DEFAULT_BASE, fetchImpl = globalThis.fetch, store, client = 'companion/0.3.0', credentials = 'omit', timeoutMs = 20000 }) {
+export function createClient({ base = DEFAULT_BASE, fetchImpl = globalThis.fetch, store, client = 'companion/0.3.3', credentials = 'omit', timeoutMs = 20000 }) {
   base = checkBase(base);
   let refreshing = null;
 
@@ -54,17 +54,23 @@ export function createClient({ base = DEFAULT_BASE, fetchImpl = globalThis.fetch
     return { r, data };
   }
 
+  const changedSession = current => {
+    const e = new ApiError(current ? 409 : 401, 'Your Pulse sign-in changed. Try again.');
+    if (!current) e.signedOut = true;
+    return e;
+  };
+
   async function refresh(old) {
     const current = await store.get();
     if (!current || current.deviceId !== old.deviceId) {
-      const e = new ApiError(401, 'Your Pulse sign-in changed. Try again.'); e.signedOut = true; throw e;
+      throw changedSession(current);
     }
     // Another request may already have rotated while this request's 401 was in flight.
     if (current.refreshToken !== old.refreshToken) return current;
     const { r, data } = await send('native/refresh', { refreshToken: old.refreshToken });
     const latest = await store.get();
     if (!latest || latest.deviceId !== old.deviceId || latest.refreshToken !== old.refreshToken) {
-      const e = new ApiError(401, 'Your Pulse sign-in changed. Try again.'); e.signedOut = true; throw e;
+      throw changedSession(latest);
     }
     if (!r.ok || !TOKEN.test(data.accessToken ?? '') || !TOKEN.test(data.refreshToken ?? '')) { await store.clear(); const e = new ApiError(401, 'This device was signed out of Pulse. Sign in again.'); e.signedOut = true; throw e; }
     const next = { ...old, accessToken: data.accessToken, refreshToken: data.refreshToken };
@@ -83,6 +89,7 @@ export function createClient({ base = DEFAULT_BASE, fetchImpl = globalThis.fetch
       tokens = await refreshing;
       ({ r, data } = await send(path, body, tokens.accessToken));
     }
+    if(auth){const latest=await store.get();if(!latest||latest.deviceId!==tokens.deviceId)throw changedSession(latest);}
     if (!r.ok) {
       const e = new ApiError(r.status, data?.error ?? `Pulse answered ${r.status}`);
       if (r.status === 401) { await store.clear(); e.signedOut = true; }
