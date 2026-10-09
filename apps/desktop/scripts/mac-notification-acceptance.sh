@@ -5,19 +5,26 @@ set -euo pipefail
 [[ -x $PULSE_MAC_APP/Contents/MacOS/pulse-desktop ]]
 mkdir -p screens
 app_bin="$PULSE_MAC_APP/Contents/MacOS/pulse-desktop"
-"$app_bin" --settings=notifications > screens/macos-notifications.log 2>&1 &
-pulse_pid=$!
+# Match a person's Finder launch: register the installed bundle and use LaunchServices.
+/System/Library/Frameworks/CoreServices.framework/Frameworks/LaunchServices.framework/Support/lsregister -f "$PULSE_MAC_APP"
+open -n "$PULSE_MAC_APP" --args --settings=notifications
+pulse_pid=""
 finish() {
   result=$?
   if [[ $result != 0 ]]; then
     screencapture -x screens/macos-notification-failure.png || true
     cat screens/macos-notification-authorization.txt 2>/dev/null || true
+    osascript -e 'tell application "System Events" to get name of every application process' > screens/macos-processes.txt 2>&1 || true
+    log show --last 10m --style compact --predicate 'process == "pulse-desktop" OR subsystem == "com.apple.usernotifications"' > screens/macos-notification-system.log 2>&1 || true
     osascript -e 'tell application "System Events" to tell (first process whose bundle identifier is "com.pulse.work") to get entire contents of every window' > screens/macos-notification-ui.txt 2>&1 || true
   fi
-  kill "$pulse_pid" 2>/dev/null || true
+  [[ -z "$pulse_pid" ]] || kill "$pulse_pid" 2>/dev/null || true
 }
 trap finish EXIT
 sleep 12
+pulse_pid=$(osascript -e 'tell application "System Events" to get unix id of (first process whose bundle identifier is "com.pulse.work")')
+kill -0 "$pulse_pid"
+screencapture -x screens/macos-notification-before.png
 # Exercise the same Turn on control that the person uses. No permission database edits.
 cat > "$RUNNER_TEMP/allow-pulse.applescript" <<'SCRIPT'
 using terms from application "System Events"
@@ -45,12 +52,24 @@ tell application "System Events"
     delay 1
     -- Enumerating live application-process references races when a short-lived process exits.
     -- Inspect only the actual permission-dialog owners, tolerating a missing process this pass.
-    repeat with targetName in {"NotificationCenter", "UserNotificationCenter", "pulse-desktop"}
+    repeat with targetName in {"NotificationCenter", "UserNotificationCenter", "CoreServicesUIAgent", "System Settings", "pulse-desktop"}
       try
-        set targetProcess to application process (targetName as text)
-        if exists targetProcess then
-          if my pressNamed(UI elements of targetProcess, "Allow") then return "Allowed through the real notification permission UI"
-        end if
+        with timeout of 3 seconds
+          set targetProcess to application process (targetName as text)
+          if exists targetProcess then
+            repeat with targetWindow in windows of targetProcess
+              set controls to entire contents of targetWindow
+              repeat with uiControl in controls
+                try
+                  if role of uiControl is "AXButton" and (name of uiControl as text) is "Allow" then
+                    click uiControl
+                    return "Allowed through the real notification permission UI"
+                  end if
+                end try
+              end repeat
+            end repeat
+          end if
+        end timeout
       end try
     end repeat
   end repeat
