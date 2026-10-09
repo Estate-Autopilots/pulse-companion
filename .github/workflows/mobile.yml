@@ -143,7 +143,7 @@ jobs:
             cp "$ANDROID_HOME/emulator/emulator" "$ANDROID_HOME/emulator/emulator.bin"
             cat > "$ANDROID_HOME/emulator/emulator" <<'SH'
             #!/bin/sh
-            exec "$(dirname "$0")/emulator.bin" "$@" > "$GITHUB_WORKSPACE/screens/emulator-host.log" 2>&1
+            exec "$ANDROID_HOME/emulator/emulator.bin" "$@" > "$GITHUB_WORKSPACE/screens/emulator-host.log" 2>&1
             SH
             chmod +x "$ANDROID_HOME/emulator/emulator"
           script: bash apps/mobile/scripts/android-acceptance.sh "apk/Pulse-${{ needs.prepare.outputs.version }}-android.apk" "${{ !inputs.validation_only && 'old/Pulse-1.0.0-android.apk' || '' }}" screens
