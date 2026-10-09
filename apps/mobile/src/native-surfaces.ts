@@ -24,9 +24,9 @@ async function update(payload:CompanionPayload|null,prefs?:Prefs){
  if(Platform.OS!=='android')return;
  if(!state.active){await notifee.cancelNotification(RIBBON);return;}
  const channelId=await notifee.createChannel({id:'working-day',name:'Working day',importance:AndroidImportance.LOW});
- await notifee.displayNotification({id:RIBBON,title:state.title,body:state.pending?'Saved on phone · syncing':state.state==='break'?'Break timer':'Working time',
+ await notifee.displayNotification({id:RIBBON,title:state.title,subtitle:state.state==='break'?'On a break':'Working',body:state.pending?'Saved on this phone · syncing when online':state.state==='break'?'Your break timer is running. Tap Back when you return.':'Your working time is running. Break and check-out are one tap away.',
    data:{entryId:payload?.entry?.id??'',state:state.state,demo:payload?.demo?'true':'false'},
-   android:{channelId,smallIcon:'ic_launcher',...(p.mascot?{largeIcon:require('../assets/adaptive-icon.png')}:{}),ongoing:true,autoCancel:false,onlyAlertOnce:true,
+   android:{channelId,smallIcon:'ic_launcher',color:'#5B45D6',...(p.mascot?{largeIcon:require('../assets/adaptive-icon.png')}:{}),ongoing:true,autoCancel:false,onlyAlertOnce:true,
      showChronometer:true,chronometerDirection:'up',timestamp:state.timerSince??Date.now(),pressAction:{id:'default',launchActivity:'default'},
      actions:state.actions.map(a=>({title:a.id==='break-start'?'Break':a.id==='break-end'?'Back':a.label,pressAction:{id:a.id,launchActivity:'default'}}))}});
 }

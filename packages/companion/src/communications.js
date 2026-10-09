@@ -293,7 +293,7 @@ export function mountCommunications(root,{call,onOpen,onSwitch,onResize=()=>{},o
   const top = element('span', undefined, 'pc-row-top');
   top.append(element('span', ch.name, 'pc-row-title'), element('time', ch.lastAt ? shortTime(ch.lastAt) : '', 'pc-row-time'));
   const bottom = element('span', undefined, 'pc-row-bottom');
-  const preview = ch.preview ? `${group && ch.previewAuthor ? `${ch.previewAuthor.split(' ')[0]}: ` : ''}${ch.preview}` : group ? `${ch.members ?? 0} members` : 'Say hello';
+  const preview = ch.preview ? `${group && ch.previewAuthor ? `${ch.previewAuthor.split(' ')[0]}: ` : ''}${ch.preview}` : group ? (ch.members ? `${ch.members} members` : 'Group') : 'Say hello';
   bottom.append(element('span', preview, 'pc-row-preview'));
   if (ch.unread) bottom.append(pill(ch.unread, 'unread'));
   body.append(top, bottom);
@@ -342,7 +342,7 @@ export function mountCommunications(root,{call,onOpen,onSwitch,onResize=()=>{},o
   const ch = channels.find((c) => c.id === selected);
   const head = element('header', undefined, 'pc-convo-head');
   const title = element('div', undefined, 'pc-convo-title');
-  title.append(element('strong', ch?.name ?? 'Conversation'), element('span', ch && ch.kind !== 'direct' ? `${ch.members ?? 0} members` : 'Direct message', 'pc-convo-sub'));
+  title.append(element('strong', ch?.name ?? 'Conversation'), element('span', ch && ch.kind !== 'direct' ? (ch.members ? `${ch.members} members` : 'Group') : 'Direct message', 'pc-convo-sub'));
   head.append(
    iconButton('back', 'Back to chats', () => { selected = null; draw(); }, 'pc-icon-btn pc-back'),
    avatar(ch?.name ?? 'Conversation', { group: !!ch && ch.kind !== 'direct', size: 'sm' }), title,

@@ -1,7 +1,8 @@
 // The desktop quick panel (Windows tray / Mac menu bar). Uses the shared companion core; the Rust side keeps
 // the device credential, talks to Pulse, positions the window, shows notifications and drives the tray.
 // Settings live in their own window (settings.html); the full Pulse opens in the Pulse window.
-import { applyLocal, badge, celebration, clockOffset, deriveView, demoClient, dueReminders, enqueue, outcomeOf, prefsWith, prune, queuedRequest, settle, shouldPopUp, projected } from './companion/index.js';
+import { applyLocal, badge, celebration, clockOffset, deriveView, demoClient, dueReminders, prefsWith, shouldPopUp, projected } from './companion/index.js';
+import { DesktopSession } from './companion/desktop-session.js';
 import { UpdateController, canOfferUpdate } from './companion/updates.js';
 import { updateCard } from './companion/update-card.js';
 import { mountCommunications } from './companion/communications.js';
@@ -15,7 +16,7 @@ const listen = (name, run) => { try { return window.__TAURI__.event?.listen(name
 const root = document.getElementById('app');
 const state = {
   session: null, payload: null, offset: 0, demo: null, screen: 'day', busy: false, status: null, celebrate: false,
-  connect: { phase: 'start' }, prefs: prefsWith(store.get('prefs', {})), mode: store.get('mode', null), queue: store.get('queue', []),
+  connect: { phase: 'start' }, prefs: prefsWith(store.get('prefs', {})), mode: store.get('mode', null), queue: [], legacyQueue: store.get('queue', []).length > 0,
   shown: new Set(store.get('shown', [])), info: { version: '', shortcut: 'Ctrl+Alt+P' }, lastTray: '', pollTimer: null,
 };
 applyTheme();
@@ -40,7 +41,7 @@ const features = mountFeatures(featuresHost, {
 const panel = mountPanel(panelHost, {
   onAction: (id) => void act(id),
   onMode: (mode) => { state.mode = mode; store.set('mode', mode); render(); },
-  onOpen: (href) => void invoke('open_pulse', { path: href }),
+  onOpen: (href) => { recovery.notice = null; try { recovery.save(); } catch {} state.status = null; void invoke('open_pulse', { path: href }); render(); },
   onTool: () => {},
 });
 
@@ -68,6 +69,36 @@ const client = () => state.demo ?? {
     return invoke('companion_request', { path, body });
   },
 };
+
+const recovery = new DesktopSession({
+  read: () => store.get('attendanceRecovery', null),
+  write: (value) => { if (value) localStorage.setItem('pulse.attendanceRecovery', JSON.stringify(value)); else localStorage.removeItem('pulse.attendanceRecovery'); },
+  client: () => ({
+    companion: () => client().companion().catch((e) => { throw failure(e); }),
+    act: (id, extra) => client().act(id, extra).catch((e) => { throw failure(e); }),
+  }),
+});
+function restoreAttendance(session) {
+  recovery.use(session);
+  state.queue = recovery.queue; state.payload = recovery.payload;
+  state.offset = recovery.offset;
+}
+function connectionStatus() {
+  const row = Object.assign(document.createElement('div'), { className: 'connect-foot connection-status' });
+  const stamp = recovery.confirmedAt ? new Date(recovery.confirmedAt).toLocaleString(undefined, { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' }) : null;
+  const text = state.demo ? 'Demo · nothing is saved' : `${recovery.error ? 'Connection interrupted' : recovery.fresh ? 'Connected' : stamp ? 'Saved update' : 'Connecting'} · ${stamp ? `last confirmed ${stamp}` : 'no confirmed update yet'}${state.queue.length ? ` · ${state.queue.length} pending` : ''}`;
+  if (state.legacyQueue && !state.demo) {
+    const review = Object.assign(document.createElement('button'), { type: 'button', textContent: 'Review earlier taps on My desk' });
+    review.addEventListener('click', () => void invoke('open_pulse', { path: '/me?tab=attendance' }));
+    row.append(review);
+  }
+  row.append(Object.assign(document.createElement('span'), { textContent: text }));
+  if (!state.demo) {
+    const retry = Object.assign(document.createElement('button'), { type: 'button', textContent: 'Retry', disabled: state.busy || state.syncing });
+    retry.addEventListener('click', () => void refresh()); row.append(retry);
+  }
+  return row;
+}
 
 // ---------------------------------------------------------------------------------------------------- render
 function fit() {
@@ -97,9 +128,10 @@ function render() {
     communications.attach();
     panel.reset();
     panel.render(deriveView(p, now(), { celebrate: state.celebrate }), {
-      busy: state.busy || state.installing, status: state.status?.text ?? (state.demo ? 'Demo · nothing is saved' : state.queue.length ? `${state.queue.length} saved on this computer · will sync` : undefined),
+      busy: state.busy || state.syncing || state.installing, status: state.status?.text ?? (state.demo ? 'Demo · nothing is saved' : state.queue.length ? `${state.queue.length} saved on this computer · will sync` : undefined),
       statusTone: state.status?.tone, mode: state.mode ?? p?.shift?.mode ?? 'office', showPip: state.prefs.mascot, openLabel: 'Open My desk',
     });
+    panelHost.append(connectionStatus());
   }
   updateUi();
 }
@@ -121,56 +153,54 @@ function tick() {
 
 // ---------------------------------------------------------------------------------------------------- data
 async function refresh() {
-  if (state.screen === 'connect' && !state.demo) return;
+  if (state.session?.restoring || state.busy || state.syncing || (state.screen === 'connect' && !state.demo)) return;
+  const session = state.session, demo = state.demo;
+  state.syncing = true;
   try {
-    state.syncing = true; updateUi();
-    await flush();
-    const p = await client().companion();
-    state.payload = p; state.offset = clockOffset(p);
-    if (state.status?.tone === 'warning') state.status = null;
+    const result = demo ? { payload: await demo.companion() } : await recovery.refresh();
+    if (session !== state.session || demo !== state.demo || !result) return;
+    state.payload = result.payload; state.offset = clockOffset(result.payload);
+    state.status = result.warning ? { text: result.warning, tone: 'warning' } : null;
   } catch (e) {
+    if (session !== state.session || demo !== state.demo) return;
     const f = failure(e);
-    if (f.signedOut) { updates.reset(); state.session = await invoke('companion_session'); state.screen = 'connect'; state.connect = { phase: 'start', message: f.message }; }
-    else state.status = { text: f.message, tone: 'warning' };
+    if (f.signedOut) {
+      updates.reset(); state.session = await invoke('companion_session'); restoreAttendance(state.session);
+      state.screen = 'connect'; state.connect = { phase: 'start', message: f.message };
+    } else { state.payload = recovery.payload; state.status = { text: recovery.notice ?? f.message, tone: 'warning' }; }
+  } finally {
+    state.syncing = false; state.queue = recovery.queue;
+    render(); tray(); remind();
   }
-  state.syncing = false;
-  render(); tray(); remind();
   if (state.payload) void features.refresh(state.payload.state).then(fit);
   void updates.poll(updateContext());
 }
-async function flush() {
-  if (state.demo) return;
-  const { keep, expired } = prune(state.queue, Date.now());
-  if (expired.length) state.status = { text: `${expired.length} saved action${expired.length > 1 ? 's were' : ' was'} too old to send. Ask for a correction on My desk.`, tone: 'warning' };
-  state.queue = keep;
-  while (state.queue.length) {
-    const item = state.queue[0], { action, extra } = queuedRequest(item);
-    try { await client().act(action, extra); state.queue = settle(state.queue, item.id, 'ok'); }
-    catch (e) { const outcome = outcomeOf(failure(e)); state.queue = settle(state.queue, item.id, outcome); if (outcome === 'retry') break; state.status = { text: failure(e).message, tone: 'warning' }; }
-  }
-  store.set('queue', state.queue);
-}
 async function act(id) {
-  if (state.busy || state.installing || !state.payload) return;
+  if (state.busy || state.syncing || state.installing || !state.payload) return;
   const before = state.payload, at = now(), extra = id === 'check-in' ? { mode: state.mode ?? before.shift?.mode ?? 'office' } : {};
+  const session = state.session, demo = state.demo;
   state.busy = true; state.status = null;
-  state.payload = { ...applyLocal(before, id, at, extra), pending: false };
+  state.payload = { ...applyLocal(before, id, at, extra), pending: true };
   render();
   try {
-    await client().act(id, extra);
-    const p = await client().companion();
+    const result = demo ? (await demo.act(id, extra), { payload: await demo.companion() }) : await recovery.act(id, extra);
+    if (session !== state.session || demo !== state.demo || !result) return;
+    const p = result.payload;
     state.payload = p; state.offset = clockOffset(p);
     const party = id === 'check-in' && p.entry && !p.entry.late ? celebration(p) : null;
-    state.status = party ? null : { text: id === 'check-in' ? 'Checked in. Have a good day!' : id === 'break-start' ? 'Enjoy your break' : id === 'break-end' ? 'Welcome back' : 'Checked out. See you tomorrow!', tone: 'success' };
+    state.status = result.warning ? { text: result.warning, tone: 'warning' } : party ? null : { text: id === 'check-in' ? 'Checked in. Have a good day!' : id === 'break-start' ? 'Enjoy your break' : id === 'break-end' ? 'Welcome back' : 'Checked out. See you tomorrow!', tone: 'success' };
     if (party) { state.celebrate = true; setTimeout(() => { state.celebrate = false; render(); }, 4200); }
   } catch (e) {
-    const f = failure(e);
-    if (f.offline || f.gate) {
-      state.payload = before;
-      state.queue = enqueue(state.queue, id, at, extra); store.set('queue', state.queue);
-      state.status = { text: 'Saved on this computer · Pulse will catch up when it can', tone: 'success' };
-    } else { state.payload = before; state.status = { text: f.message, tone: 'warning' }; }
-  } finally { state.busy = false; render(); tray(); if (state.payload) void features.refresh(state.payload.state).then(fit); }
+    if (session !== state.session || demo !== state.demo) return;
+    const f = failure(e); state.payload = recovery.payload ?? before;
+    if (f.signedOut) {
+      state.session = await invoke('companion_session'); restoreAttendance(state.session);
+      state.screen = 'connect'; state.connect = { phase: 'start', message: f.message };
+    } else state.status = { text: recovery.queue.length ? `${f.message} Saved on this computer; retry when connected.` : f.message, tone: 'warning' };
+  } finally {
+    state.busy = false; state.queue = recovery.queue; render(); tray();
+    if (state.payload) void features.refresh(state.payload.state).then(fit);
+  }
 }
 function tray() {
   const p = state.queue.length && state.payload ? projected(state.payload, state.queue) : state.payload;
@@ -179,7 +209,7 @@ function tray() {
   if (key !== state.lastTray) { state.lastTray = key; void invoke('set_tray', { text: b.text, tone: b.tone, title: b.title }).catch(() => {}); }
 }
 function remind() {
-  if (!state.payload || state.demo) return;
+  if (!state.payload || state.demo || state.queue.length || recovery.error || !recovery.fresh) return;
   const at = now();
   for (const r of dueReminders(state.payload, state.prefs, at, state.shown)) {
     state.shown.add(r.id);
@@ -225,8 +255,9 @@ const connectHandlers = {
 };
 async function signedIn(session) {
   updates.reset();
-  state.session = session; state.demo = null; state.screen = 'day'; state.connect = { phase: 'start' };
+  state.session = session; restoreAttendance(session); state.demo = null; state.screen = 'day'; state.connect = { phase: 'start' };
   await refresh();
+  if (state.screen !== 'day' || recovery.error) return;
   state.status = { text: `Hello${session.personName ? `, ${session.personName.split(' ')[0]}` : ''}! You’re connected.`, tone: 'success' };
   state.celebrate = true; render();
   setTimeout(() => { state.celebrate = false; render(); }, 3500);
@@ -234,7 +265,7 @@ async function signedIn(session) {
 async function signOut() {
   updates.reset();
   state.session = await invoke('companion_sign_out');
-  state.payload = null; state.queue = []; store.set('queue', []); state.screen = 'connect'; state.connect = { phase: 'start', message: 'Signed out of this computer.' };
+  state.demo = null; restoreAttendance(state.session); state.payload = null; state.queue = []; state.screen = 'connect'; state.connect = { phase: 'start', message: 'Signed out of this computer.' };
   render(); tray();
 }
 
@@ -258,6 +289,7 @@ async function boot() {
   const launch = state.info.launch ?? {};
   if (launch.theme) document.documentElement.dataset.theme = launch.theme;
   state.session = await invoke('companion_session');
+  if (!state.session.restoring) restoreAttendance(state.session);
   state.screen = state.session.signedIn ? 'day' : 'connect';
   if (!state.session.signedIn && state.session.notice) state.connect = { phase: 'start', message: state.session.notice };
   render();
@@ -274,8 +306,8 @@ async function boot() {
     render(); if (payload.channelId) communications.open(payload.channelId, payload.href); else if (payload.notificationId) communications.showInbox(); if (payload.error) communications.status(payload.error);
   });
   void listen('pulse:prefs', () => { state.prefs = prefsWith(store.get('prefs', {})); applyTheme(); panel.reset(); render(); });
-  void listen('pulse:signed-in', async () => { const s = await invoke('companion_session'); if (s.signedIn && !state.session?.signedIn) await signedIn(s); });
-  void listen('pulse:signed-out', async () => { state.session = await invoke('companion_session'); if (!state.session.signedIn) { state.payload = null; state.screen = 'connect'; render(); tray(); } });
+  void listen('pulse:signed-in', async () => { const s = await invoke('companion_session'); if (s.signedIn && s.deviceId !== state.session?.deviceId) await signedIn(s); });
+  void listen('pulse:signed-out', async () => { state.session = await invoke('companion_session'); if (!state.session.signedIn) { restoreAttendance(state.session); state.payload = null; state.screen = 'connect'; render(); tray(); } });
   void listen('pulse:presence', () => void refresh());
   void listen('pulse:install-update', () => void installUpdate());
   void listen('pulse:check-updates', () => void updates.poll(updateContext(), true));
@@ -303,7 +335,7 @@ async function finishSessionRestore() {
     // A demo started meanwhile keeps its screen; the restored (signed-out) session only replaces the session.
     if (state.demo) { state.session = session; render(); return; }
     updates.reset(); updates.laterUntil = store.get('updateLater', 0);
-    state.session = session; state.screen = session.signedIn ? 'day' : 'connect';
+    state.session = session; restoreAttendance(session); state.screen = session.signedIn ? 'day' : 'connect';
     if (!session.signedIn && session.notice) state.connect = { phase: 'start', message: session.notice };
     render(); await refresh(); void updates.poll(updateContext());
   } catch { if (state.session?.restoring) setTimeout(() => void finishSessionRestore(), 1000); }

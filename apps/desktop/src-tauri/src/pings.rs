@@ -27,7 +27,9 @@ pub fn ping_text(kind:&str)->&'static str{
 
 #[tauri::command]
 pub fn companion_ping_state(app:AppHandle,state:State<'_,Pings>)->Value{
- json!({"panelVisible":app.get_webview_window(crate::PANEL).is_some_and(|w|w.is_visible().unwrap_or(false)),"snapshot":current_snapshot(&app),"error":state.error.lock().unwrap().clone(),"pingIssue":state.issue.lock().unwrap().clone(),"platform":crate::companion::platform()})
+ // Permission is local OS state. It must be accurate before pairing and while the server is offline too.
+ let ping_issue=permission().err().or_else(||state.issue.lock().unwrap().clone());
+ json!({"panelVisible":app.get_webview_window(crate::PANEL).is_some_and(|w|w.is_visible().unwrap_or(false)),"snapshot":current_snapshot(&app),"error":state.error.lock().unwrap().clone(),"pingIssue":ping_issue,"platform":crate::companion::platform()})
 }
 /// The banner's Fix button and Settings → Notifications: ask the OS properly, or open the exact OS settings page.
 #[tauri::command]
