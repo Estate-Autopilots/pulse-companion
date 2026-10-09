@@ -124,7 +124,7 @@ jobs:
           arch: x86_64
           target: google_apis
           cores: 2
-          ram-size: 4096M
+          ram-size: 2048M
           heap-size: 512M
           disk-size: 6000M
           emulator-boot-timeout: 900
@@ -133,6 +133,13 @@ jobs:
           emulator-options: -no-window -gpu swiftshader -feature -Vulkan -noaudio -no-boot-anim -no-snapshot
           disable-animations: true
           script: bash apps/mobile/scripts/android-acceptance.sh "apk/Pulse-${{ needs.prepare.outputs.version }}-android.apk" "${{ !inputs.validation_only && 'old/Pulse-1.0.0-android.apk' || '' }}" screens
+      - name: Record emulator host memory and process failures
+        if: always()
+        run: |
+          mkdir -p screens
+          free -m > screens/host-memory.txt
+          ps -C qemu-system-x86_64 -o pid,rss,stat >> screens/host-memory.txt || true
+          sudo dmesg | grep -Ei 'out of memory|oom-kill|killed process|qemu.*segfault' > screens/host-kernel.txt || true
       - uses: actions/upload-artifact@v7
         if: always()
         with:
