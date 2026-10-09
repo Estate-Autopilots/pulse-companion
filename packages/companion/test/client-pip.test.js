@@ -157,3 +157,14 @@ test('a remembered device without an access credential rotates before its first 
   assert.deepEqual(paths, ['native/refresh', 'companion']);
   assert.equal(day.auth, `Bearer ${T('n')}`);
 });
+
+test('an old device response cannot expose its data or clear a newly paired account', async () => {
+  for (const status of [200,401]) {
+    const store=memoryStore({accessToken:T('a'),deviceId:'old'});
+    let release,entered;const waiting=new Promise(r=>release=r),started=new Promise(r=>entered=r);
+    const c=createClient({base:'https://pulse.example/api/native/v0',store,fetchImpl:async()=>{entered();await waiting;return json(status,{private:'old account',error:'expired'});}});
+    const pending=c.companion();await started;await store.set({accessToken:T('b'),deviceId:'new'});release();
+    await assert.rejects(pending,e=>e.status===409&&!e.signedOut);
+    assert.equal(store.peek().deviceId,'new');
+  }
+});

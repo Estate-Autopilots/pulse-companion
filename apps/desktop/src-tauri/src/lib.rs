@@ -1,4 +1,5 @@
 mod companion;
+mod pings;
 mod updater;
 use updater::{update_check, update_prepare, update_install, update_healthy, Updates, Gate};
 
@@ -84,7 +85,7 @@ fn show_panel(app: &AppHandle) {
 
 fn hide_panel(app: &AppHandle) {
     if let Some(win) = panel(app) {
-        let _ = win.hide();
+        let _=win.eval("window.pulsePanel?.hidden?.()");let _ = win.hide();
         app.state::<Mutex<Anchor>>().lock().unwrap().hidden_at = Some(Instant::now());
     }
 }
@@ -128,7 +129,7 @@ fn companion_session(state: State<'_, Companion>) -> Value { state.session() }
 
 #[tauri::command]
 async fn companion_request(app: AppHandle, path: String, body: Option<Value>) -> Result<Value, String> {
-    if !path.chars().all(|c| c.is_ascii_alphanumeric() || "/-?=&".contains(c)) { return Err(companion::CallError::default().text()); }
+    if !path.chars().all(|c| c.is_ascii_alphanumeric() || "/-?=&%:._".contains(c)) { return Err(companion::CallError::default().text()); }
     {
         let gate_state = app.state::<Gate>(); let mut gate = gate_state.0.lock().unwrap();
         if gate.1 { return Err("Pulse is installing an update. Try again after restart.".into()); }
@@ -142,11 +143,14 @@ async fn companion_request(app: AppHandle, path: String, body: Option<Value>) ->
 }
 
 #[tauri::command]
-async fn companion_pair_start(app: AppHandle, base: String) -> Result<Value, String> {
+async fn companion_pair_start(app: AppHandle, base: String, expected_person: Option<String>) -> Result<Value, String> {
     let started = tauri::async_runtime::spawn_blocking(move || app.state::<Companion>().pair_start(&base).map_err(err))
         .await
         .map_err(|_| "{\"message\":\"Pulse request interrupted\"}".to_string())??;
-    if let Some(url) = started["verifyUrl"].as_str() { let _ = open_url(url); }
+    if let Some(url) = started["verifyUrl"].as_str() {
+        let target=expected_person.filter(|s|s.len()==36&&s.chars().all(|c|c.is_ascii_hexdigit()||c=='-')).map(|p|format!("{url}&expected={p}")).unwrap_or_else(||url.to_string());
+        let _ = open_url(&target);
+    }
     Ok(started)
 }
 
@@ -206,8 +210,16 @@ fn panel_pin(app: AppHandle, pinned: bool) { app.state::<Mutex<Anchor>>().lock()
 #[tauri::command]
 fn set_tray(app: AppHandle, text: String, tone: String, title: String) {
     let Some(tray) = app.tray_by_id("pulse") else { return };
+    let (text,tone,title)=if title=="Pulse"&&text.is_empty()&&tone=="neutral"{
+        app.state::<pings::Pings>().tray.lock().unwrap().clone()
+    }else{
+        *app.state::<pings::Pings>().tray.lock().unwrap()=(text.clone(),tone.clone(),title.clone());
+        (text,tone,title)
+    };
+    let unread=pings::unread(&app);
     #[cfg(target_os = "macos")]
     {
+        let text=if unread>0{unread.to_string()}else{text};
         let _ = tray.set_title(if text.is_empty() { None } else { Some(text.chars().take(8).collect::<String>()) });
         let _ = tone;
     }
@@ -215,8 +227,9 @@ fn set_tray(app: AppHandle, text: String, tone: String, title: String) {
     {
         let _ = &text;
         let bytes = match tone.as_str() { "success" => ICON_IN, "info" => ICON_BREAK, "warning" => ICON_ALERT, _ => ICON_IDLE };
-        if let Ok(icon) = Image::from_bytes(bytes) { let _ = tray.set_icon(Some(icon)); }
+        if let Ok(icon) = Image::from_bytes(bytes) { let _ = tray.set_icon(Some(if unread>0{pings::badge_icon(icon,unread)}else{icon})); }
     }
+    let title=if unread>0{format!("Pulse · {unread} unread")}else{title};
     let _ = tray.set_tooltip(Some(title.chars().take(120).collect::<String>()));
 }
 
@@ -314,6 +327,7 @@ pub fn run() {
                 .build(),
         )
         .manage(Companion::new())
+        .manage(pings::Pings::default())
         .manage(Mutex::new(Anchor::default()))
         .setup(move |app| {
             #[cfg(target_os = "macos")]
@@ -388,6 +402,7 @@ pub fn run() {
                     _ => {}
                 })
                 .build(app)?;
+            pings::start(app.handle().clone());
             let _ = app.global_shortcut().register(register);
             // Opened by the person (not at sign-in to the computer): say hello once.
             // --pinned keeps the panel open (screenshots on build runners and demos).
@@ -403,6 +418,8 @@ pub fn run() {
             update_healthy,
             companion_session,
             companion_request,
+            pings::companion_ping_state,
+            pings::companion_ping_enable,
             companion_pair_start,
             companion_pair_poll,
             companion_pair_cancel,

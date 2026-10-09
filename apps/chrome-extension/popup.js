@@ -3,6 +3,7 @@
 import { applyLocal, deriveView, prefsWith } from './shared/index.js';
 import { UpdateController, parseManifest, newer } from './shared/updates.js';
 import { updateCard } from './shared/update-card.js';
+import { mountCommunications } from './shared/communications.js';
 import { icon, mountPanel, renderConnect } from './shared/panel.js';
 
 const root = document.getElementById('app');
@@ -12,7 +13,12 @@ const ask = (msg) => new Promise((resolve, reject) => chrome.runtime.sendMessage
   else resolve(r.data);
 }));
 const state = { s: null, screen: 'day', busy: false, status: null, celebrate: false, mode: localStorage.getItem('pulse.mode'), connect: { phase: 'start' } };
-const panel = mountPanel(root, {
+const communications=mountCommunications(root,{
+  call:(path,body)=>ask({op:'communication',path,body}),
+  onOpen:(href)=>void chrome.tabs.create({url:new URL(href,new URL(state.s?.base??'https://pulse.estateautopilots.com').origin).href}),
+  onSwitch:()=>void ask({op:'signOut'}).then(load),platform:'chrome',
+});
+const panel = mountPanel(communications.todayHost, {
   onAction: (id) => void act(id),
   onMode: (m) => { state.mode = m; localStorage.setItem('pulse.mode', m); render(); },
   onOpen: (href) => void chrome.tabs.create({ url: new URL(href, new URL(state.s?.base ?? 'https://pulse.estateautopilots.com').origin).href }),
@@ -61,6 +67,9 @@ function render() {
     return;
   }
   const p = s.day?.payload ?? null;
+  communications.attach();
+  if(s.communications)communications.snapshot(s.communications);
+  if(s.pingError)communications.status(s.pingError);
   panel.reset();
   panel.render(deriveView(p, now(), { celebrate: state.celebrate }), {
     busy: state.busy, status: state.status?.text ?? (s.demo ? 'Demo · nothing is saved' : s.error ? s.error.message : undefined), statusTone: state.status?.tone ?? (s.error ? 'warning' : undefined),
@@ -156,3 +165,5 @@ setInterval(() => { if (state.s && !state.s.signedIn && state.s.pair) void load(
 void load(true);
 
 setInterval(() => { void updates.poll(updateContext()); showUpdate(); }, 60000);
+
+setInterval(async()=>{if(state.s?.signedIn&&!state.s.demo){try{const s=await ask({op:"communicationState"});if(s.snapshot)communications.snapshot(s.snapshot);if(s.error)communications.status(s.error);}catch{}}},2500);

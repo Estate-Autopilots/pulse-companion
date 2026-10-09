@@ -2,26 +2,26 @@
   "expo": {
     "name": "Pulse",
     "slug": "pulse-native",
-    "version": "0.3.1",
+    "version": "0.3.4",
     "scheme": "pulse",
     "orientation": "portrait",
     "userInterfaceStyle": "automatic",
     "icon": "./assets/icon.png",
     "ios": {
       "bundleIdentifier": "com.pulse.work.mobile",
-      "buildNumber": "3001",
+      "buildNumber": "3004",
       "supportsTablet": true,
       "entitlements": {
         "com.apple.developer.networking.wifi-info": true
       },
       "infoPlist": {
         "NSLocationWhenInUseUsageDescription": "Pulse uses location permission for office Wi-Fi suggestions and arrival reminders. Location is read for region events or a shoot you confirm; Pulse keeps no location history.",
-        "NSLocationAlwaysAndWhenInUseUsageDescription": "With \u201cAlways\u201d, your iPhone tells Pulse when you arrive at or leave an office or confirmed shoot site, so it can suggest checking in or out. Pulse never keeps a location history."
+        "NSLocationAlwaysAndWhenInUseUsageDescription": "With “Always”, your iPhone tells Pulse when you arrive at or leave an office or confirmed shoot site, so it can suggest checking in or out. Pulse never keeps a location history."
       }
     },
     "android": {
       "package": "com.pulse.work.mobile",
-      "versionCode": 3001,
+      "versionCode": 3004,
       "adaptiveIcon": {
         "foregroundImage": "./assets/adaptive-icon.png",
         "backgroundColor": "#ECE8FF"
@@ -50,7 +50,7 @@
         "expo-location",
         {
           "locationWhenInUsePermission": "Pulse uses location permission for office Wi-Fi suggestions and arrival reminders. Location is read for region events or a shoot you confirm; Pulse keeps no location history.",
-          "locationAlwaysAndWhenInUsePermission": "With \u201cAllow all the time\u201d, your phone tells Pulse when you arrive at or leave an office or confirmed shoot site, so it can suggest checking in or out. Pulse never keeps a location history.",
+          "locationAlwaysAndWhenInUsePermission": "With “Allow all the time”, your phone tells Pulse when you arrive at or leave an office or confirmed shoot site, so it can suggest checking in or out. Pulse never keeps a location history.",
           "isAndroidBackgroundLocationEnabled": true,
           "isAndroidForegroundServiceEnabled": false
         }

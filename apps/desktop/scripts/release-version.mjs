@@ -6,7 +6,7 @@ const checked=v=>{if(!/^\d+\.\d+\.\d+$/.test(v))throw Error('Invalid release ver
 let version=checked(requested|| (await read('apps/desktop/package.json')).version);
 if(!requested){
  const releases=JSON.parse(execFileSync('gh',['api','repos/Estate-Autopilots/pulse-companion/releases?per_page=100'],{encoding:'utf8'}));
- // Earlier unsigned test installers do not count as an updater baseline. The first signed release stays 0.3.1.
+ // Earlier unsigned test installers do not count as an updater baseline. The first signed release starts at the reviewed baseline version.
  const published=releases.filter(r=>!r.draft&&r.assets?.some(a=>a.name==='latest.json')&&/^companion-v\d+\.\d+\.\d+-[a-f0-9]+$/.test(r.tag_name)).map(r=>r.tag_name.match(/^companion-v(\d+\.\d+\.\d+)-/)[1]).sort((a,b)=>{const x=a.split('.').map(Number),y=b.split('.').map(Number);return x[0]-y[0]||x[1]-y[1]||x[2]-y[2];}).at(-1);
  if(published){const a=version.split('.').map(Number),b=published.split('.').map(Number);if(a[0]<b[0]||a[0]===b[0]&&(a[1]<b[1]||a[1]===b[1]&&a[2]<=b[2]))version=`${b[0]}.${b[1]}.${b[2]+1}`;}
 }

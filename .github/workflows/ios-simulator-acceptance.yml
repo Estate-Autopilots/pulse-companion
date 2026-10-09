@@ -71,6 +71,10 @@ jobs:
           - takeScreenshot: ios-out
           - tapOn: {text: '^Check in$'}
           - assertVisible: 'Take a break'
+          # ActivityKit's first synchronous request can delay the JS timers on a cold simulator.
+          # Require the post-celebration state before the next real attendance tap.
+          - extendedWaitUntil: {visible: '^You’re checked in$', timeout: 60000}
+          - assertVisible: '^You’re checked in$'
           - takeScreenshot: ios-in
           - tapOn: 'Take a break'
           - assertVisible: 'On a break'

@@ -22,7 +22,26 @@ if(process.platform==='win32'){
  execFileSync('ditto',[join(mount,'Pulse.app'),join(apps,'Pulse.app')]);execFileSync('hdiutil',['detach',mount]);exe=join(apps,'Pulse.app','Contents','MacOS','pulse-desktop');
 }else throw Error('Native updater acceptance requires Windows/macOS');
 const probe=join(dir,'installed-version.txt');
-async function waitFile(file,expect,timeout=180000){const end=Date.now()+timeout;while(Date.now()<end){try{const text=await readFile(file,'utf8');if(expect(text))return text;}catch{}await new Promise(r=>setTimeout(r,1000));}throw Error(`Receipt not ready: ${file}`);}
+async function waitFile(file,expect,timeout=180000){
+ const start=Date.now(),end=start+timeout;let shot=0;
+ while(Date.now()<end){
+  try{const text=await readFile(file,'utf8');if(expect(text))return text;}catch{}
+  if(file.endsWith('healthy.json')||file.endsWith('rolled-back.json')){
+   let failure;try{failure=JSON.parse(await readFile(join(dir,'error.json'),'utf8'));}catch{}
+   if(failure)throw Error(`Native updater rejected the upgrade: ${failure.error}`);
+   // Retain the runner's actual UI while a new app is starting, including any OS permission prompt.
+   if(process.platform==='darwin'&&Date.now()-start>=(shot+1)*30000&&shot<6){
+    shot++;try{execFileSync('screencapture',['-x',join(dir,`startup-${shot}.png`)],{stdio:'ignore',timeout:10000});}catch{}
+   }
+   if(file.endsWith('healthy.json')){
+    let recovered;try{recovered=JSON.parse(await readFile(join(dir,'rolled-back.json'),'utf8'));}catch{}
+    if(recovered)throw Error(`The target failed to become healthy and restored ${recovered.version} after ${recovered.attempts} starts`);
+   }
+  }
+  await new Promise(r=>setTimeout(r,1000));
+ }
+ throw Error(`Receipt not ready: ${file}`);
+}
 spawn(exe,['--pulse-version-file',probe],{stdio:'ignore'});await waitFile(probe,s=>s===previous);
 const url=`https://github.com/${repo}/releases/download/${toTag}/latest.json`;
 spawn(exe,['--updater-acceptance',url],{env:{...process.env,PULSE_UPDATER_ACCEPTANCE_DIR:dir,PULSE_UPDATER_ACCEPTANCE_FAIL_VERSION:scenario==="rollback"?manifest.version:""},stdio:'ignore'});
