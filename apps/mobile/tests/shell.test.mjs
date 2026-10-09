@@ -44,11 +44,11 @@ test('installs over the Expo app: same package, durable key, higher versionCode'
   assert.match(gradle, new RegExp(`def pulseVersion = '${pkg.version.replaceAll('.', '\\.')}'`));
   const [a, b, c] = pkg.version.split('.').map(Number);
   assert.ok(a * 1000000 + b * 1000 + c > PUBLISHED_EXPO_VERSION_CODE);
-  assert.equal(pkg.version, '1.1.0');
+  assert.equal(pkg.version, '1.1.1');
   assert.match(gradle, /storeType "PKCS12"[\s\S]*keyAlias "pulse"/, 'the Expo build used this key store and alias');
   const pbx = read('ios/App/App.xcodeproj/project.pbxproj');
   assert.equal((pbx.match(new RegExp(`MARKETING_VERSION = ${pkg.version.replaceAll('.', '\\.')};`, 'g')) ?? []).length, 2);
-  assert.equal((pbx.match(/CURRENT_PROJECT_VERSION = 1001000;/g) ?? []).length, 2);
+  assert.equal((pbx.match(/CURRENT_PROJECT_VERSION = 1001001;/g) ?? []).length, 2);
 });
 
 test('the Android manifest asks for no tracking and keeps credentials on the phone', () => {

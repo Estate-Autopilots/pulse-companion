@@ -3,7 +3,7 @@ apply plugin: 'com.android.application'
 // Pulse for Android: the production Pulse web app in a thin Capacitor shell. The application id and the durable
 // release key are the Expo app's (com.pulse.work.mobile), so this build installs over 0.3.5/1.0.0 on testers' phones.
 // versionCode follows the Pulse formula major*1000000 + minor*1000 + patch; the published Expo 1.0.0 APK is 1000000.
-def pulseVersion = '1.1.0'
+def pulseVersion = '1.1.1'
 def pulseCode = pulseVersion.tokenize('.').collect { it as int }.with { it[0] * 1000000 + it[1] * 1000 + it[2] }
 
 android {
@@ -15,6 +15,7 @@ android {
         targetSdkVersion rootProject.ext.targetSdkVersion
         versionCode pulseCode
         versionName pulseVersion
+        testInstrumentationRunner "androidx.test.runner.AndroidJUnitRunner"
         aaptOptions {
              // Files and dirs to omit from the packaged assets dir, modified to accommodate modern web apps.
             ignoreAssetsPattern = '!.svn:!.git:!.ds_store:!*.scc:.*:!CVS:!thumbs.db:!picasa.ini:!*~'
@@ -41,6 +42,7 @@ android {
             signingConfig System.getenv("PULSE_ANDROID_KEYSTORE") ? signingConfigs.pulseRelease : signingConfigs.debug
         }
     }
+    testBuildType "release"
     lint {
         abortOnError false
     }
@@ -61,6 +63,8 @@ dependencies {
     implementation "androidx.work:work-runtime:$androidxWorkVersion"
     implementation project(':capacitor-android')
     testImplementation "junit:junit:$junitVersion"
+    androidTestImplementation "androidx.test:runner:1.7.0"
+    androidTestImplementation "androidx.test.ext:junit:$androidxJunitVersion"
     implementation project(':capacitor-cordova-android-plugins')
 }
 

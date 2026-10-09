@@ -1,6 +1,6 @@
 {
   "name": "@pulse/mobile",
-  "version": "1.1.0",
+  "version": "1.1.1",
   "private": true,
   "description": "Pulse for Android and iPhone: a thin Capacitor shell around the production Pulse web app.",
   "scripts": {

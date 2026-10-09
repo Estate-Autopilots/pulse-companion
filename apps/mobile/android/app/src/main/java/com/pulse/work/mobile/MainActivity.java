@@ -39,6 +39,7 @@ public class MainActivity extends BridgeActivity {
     @Override
     protected void onCreate(Bundle savedInstanceState) {
         registerPlugin(PulseShellPlugin.class);
+        registerPlugin(AttendancePlugin.class);
         // Registered before the activity starts; ShellChromeClient uses it for "Camera, Photos or Files".
         chooser = registerForActivityResult(new ActivityResultContracts.StartActivityForResult(), result -> {
             ActivityResultCallback<ActivityResult> done = chooserResult;
@@ -102,6 +103,7 @@ public class MainActivity extends BridgeActivity {
     /** A Pulse link (App Link) or a tapped notification opens its page inside the app. */
     private void open(Intent intent) {
         if (intent == null || getBridge() == null) return;
+        AttendanceSurfaces.accept(this, intent);
         // The same notification permission flow as Settings → Notifications → Turn on (used by the emulator acceptance).
         if ("notifications".equals(intent.getStringExtra(EXTRA_ASK))) {
             intent.removeExtra(EXTRA_ASK);

@@ -3,7 +3,7 @@
   "appName": "Pulse",
   "webDir": "www",
   "loggingBehavior": "debug",
-  "appendUserAgent": "PulseShell/1.1.0",
+  "appendUserAgent": "PulseShell/1.1.1",
   "zoomEnabled": false,
   "server": {
     "url": "https://pulse.estateautopilots.com",

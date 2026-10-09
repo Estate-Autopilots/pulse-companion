@@ -73,7 +73,10 @@ final class Notifier {
     /** The launcher badge on Android is the number carried by Pulse's notifications; 0 clears them. */
     static void badge(Context context, int value) {
         count = Math.max(0, value);
-        if (count == 0) NotificationManagerCompat.from(context).cancelAll();
+        if (count == 0) {
+            NotificationManagerCompat.from(context).cancelAll();
+            AttendanceSurfaces.renderRibbon(context);
+        }
     }
 
     static void app(Context context, int id, String title, String text, PendingIntent tap) {

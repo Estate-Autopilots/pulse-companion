@@ -200,4 +200,28 @@ shot 5-notification-shown
 adb shell cmd statusbar collapse || true
 pass notification_permission "prompt, Allow, confirmation notification"
 
+# R21 native fixtures run against this identical signed release APK, first granted then denied.
+TEST_APK="$(dirname "$NEW")/$(basename "$NEW" .apk | sed 's/-android$/-android-tests/').apk"
+[ -f "$TEST_APK" ] || { echo "Missing matching-source Android surface test APK" >&2; exit 1; }
+adb install -r "$TEST_APK"
+# A disposable instrumented host exercises the actual AppWidgetManager/RemoteViews; no manifest permission is added.
+R21_WIDGET_USER=$(adb shell am get-current-user | tr -d '\r')
+[[ "$R21_WIDGET_USER" =~ ^[0-9]+$ ]]
+adb shell appwidget grantbind --package "$PKG" --user "$R21_WIDGET_USER"
+for permission in granted denied; do
+  if [ "$permission" = granted ]; then adb shell pm grant $PKG android.permission.POST_NOTIFICATIONS; else adb shell pm revoke $PKG android.permission.POST_NOTIFICATIONS; fi
+  adb shell am instrument -w "$PKG.test/androidx.test.runner.AndroidJUnitRunner" > "$OUT/r21-native-$permission.txt"
+  cat "$OUT/r21-native-$permission.txt"
+  grep -q 'OK (6 tests)' "$OUT/r21-native-$permission.txt"
+  if grep -qE 'FAILURES|INSTRUMENTATION_FAILED|Process crashed' "$OUT/r21-native-$permission.txt"; then exit 1; fi
+  adb pull "/sdcard/Android/data/$PKG/files/r21-widget.png" "$OUT/r21-widget-$permission.png"
+  pass "r21_native_surfaces_$permission" "6 synthetic native tests; no staff sign-in or attendance transport"
+done
+adb shell appwidget revokebind --package "$PKG" --user "$R21_WIDGET_USER"
+adb shell am force-stop $PKG
+adb shell am start -W -n "$ACT" --es pulse.href /me >/dev/null
+wait_text "$SIGNIN" 120
+shot 6-r21-cold-workspace-denied
+pass r21_cold_workspace_denied "cold My desk shortcut retains normal sign-in with notifications denied"
+
 echo "All Android acceptance checks passed" | tee -a "$OUT/acceptance.txt"

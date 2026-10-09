@@ -1,0 +1,7 @@
+<?xml version="1.0" encoding="utf-8"?>
+<LinearLayout xmlns:android="http://schemas.android.com/apk/res/android" android:layout_width="match_parent" android:layout_height="match_parent" android:orientation="vertical" android:padding="16dp" android:background="@drawable/attendance_background">
+    <TextView android:layout_width="match_parent" android:layout_height="wrap_content" android:text="Pulse Workspace" android:textColor="#5B45D6" android:textSize="14sp" android:textStyle="bold" />
+    <TextView android:id="@+id/attendance_status" android:layout_width="match_parent" android:layout_height="wrap_content" android:layout_marginTop="8dp" android:text="Open Pulse to sign in" android:textSize="17sp" android:textColor="#20202B" android:maxLines="2" />
+    <TextView android:id="@+id/attendance_updated" android:layout_width="match_parent" android:layout_height="0dp" android:layout_weight="1" android:layout_marginTop="6dp" android:text="No saved status" android:textSize="12sp" android:textColor="#555565" android:maxLines="3" />
+    <Button android:id="@+id/attendance_primary" android:layout_width="match_parent" android:layout_height="48dp" android:text="Open Workspace" android:textAllCaps="false" android:textColor="#5B45D6" />
+</LinearLayout>
