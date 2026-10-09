@@ -4,7 +4,7 @@ on:
     branches: [main]
     paths: ['apps/desktop/**', '.github/workflows/desktop-release.yml']
   workflow_dispatch:
-permissions: { contents: read }
+permissions: { contents: read, actions: read }
 concurrency: { group: companion-release, cancel-in-progress: false }
 jobs:
   desktop:
