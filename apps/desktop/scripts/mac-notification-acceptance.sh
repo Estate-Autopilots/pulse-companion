@@ -4,6 +4,12 @@ set -euo pipefail
 [[ ${GITHUB_ACTIONS:-} == true && $(uname -s) == Darwin ]]
 [[ -x $PULSE_MAC_APP/Contents/MacOS/pulse-desktop ]]
 mkdir -p screens
+# usernoted can schedule the consent alert while a hosted VM has no Notification Center UI process.
+# Start the normal OS UI component; authorization still requires the actual Allow control.
+launchctl print "gui/$(id -u)/com.apple.notificationcenterui" > screens/macos-notification-ui-service.txt 2>&1 || true
+if [[ -d /System/Library/CoreServices/NotificationCenter.app ]]; then
+  open -g /System/Library/CoreServices/NotificationCenter.app > screens/macos-notification-ui-start.txt 2>&1 || true
+fi
 app_bin="$PULSE_MAC_APP/Contents/MacOS/pulse-desktop"
 # Match a person's Finder launch: register the installed bundle and use LaunchServices.
 /System/Library/Frameworks/CoreServices.framework/Frameworks/LaunchServices.framework/Support/lsregister -f "$PULSE_MAC_APP"
