@@ -17,7 +17,7 @@ finish() {
     osascript -e 'tell application "System Events" to get name of every application process' > screens/macos-processes.txt 2>&1 || true
     osascript -e 'tell application "System Events" to tell process "ControlCenter" to get entire contents of every window' > screens/macos-controlcenter-ui.txt 2>&1 || true
     osascript -e 'tell application "System Events" to tell process "ControlCenter" to get entire contents of every menu bar' > screens/macos-controlcenter-menu.txt 2>&1 || true
-    log show --last 10m --style compact --predicate 'process == "pulse-desktop" OR subsystem == "com.apple.usernotifications"' > screens/macos-notification-system.log 2>&1 || true
+    log show --last 10m --style compact --predicate 'process == "pulse-desktop" OR subsystem == "com.apple.UserNotifications" OR process == "usernoted" OR process == "ControlCenter"' > screens/macos-notification-system.log 2>&1 || true
     osascript -e 'tell application "System Events" to tell (first process whose bundle identifier is "com.pulse.work") to get entire contents of every window' > screens/macos-notification-ui.txt 2>&1 || true
   fi
   [[ -z "$pulse_pid" ]] || kill "$pulse_pid" 2>/dev/null || true
@@ -50,7 +50,8 @@ tell application "System Events"
   set pulseProcess to first process whose bundle identifier is "com.pulse.work"
   set frontmost of pulseProcess to true
   if not my pressNamed(UI elements of pulseProcess, "Turn on") then error "Pulse's Turn on button was not accessible"
-  repeat 30 times
+  set permissionDeadline to (current date) + 60
+  repeat while (current date) < permissionDeadline
     delay 1
     -- Enumerating live application-process references races when a short-lived process exits.
     -- Inspect only the actual permission-dialog owners, tolerating a missing process this pass.
@@ -60,8 +61,10 @@ tell application "System Events"
           set targetProcess to application process (targetName as text)
           if exists targetProcess then
             repeat with targetWindow in windows of targetProcess
+              if (current date) >= permissionDeadline then exit repeat
               set controls to entire contents of targetWindow
               repeat with uiControl in controls
+                if (current date) >= permissionDeadline then exit repeat
                 try
                   if role of uiControl is "AXButton" and (name of uiControl as text) is "Allow" then
                     click uiControl
