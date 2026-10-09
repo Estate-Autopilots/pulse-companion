@@ -88,7 +88,7 @@ public class PulseShellPlugin: CAPPlugin, CAPBridgedPlugin, CLLocationManagerDel
 
     private var enrolled: Bool { keychainGet("refresh") != nil && keychainGet("device") != nil }
 
-    private var version: String { Bundle.main.infoDictionary?["CFBundleShortVersionString"] as? String ?? "1.1.0" }
+    private var version: String { Bundle.main.infoDictionary?["CFBundleShortVersionString"] as? String ?? "1.1.1" }
 
     // MARK: Gateway
     private func gateway(_ path: String, _ body: [String: Any]?, bearer: String? = nil, done: @escaping (Int, [String: Any]) -> Void) {
@@ -160,7 +160,7 @@ public class PulseShellPlugin: CAPPlugin, CAPBridgedPlugin, CLLocationManagerDel
     @objc func info(_ call: CAPPluginCall) {
         UNUserNotificationCenter.current().getNotificationSettings { settings in
             call.resolve([
-                "platform": "ios", "version": self.version, "build": Int(Bundle.main.infoDictionary?["CFBundleVersion"] as? String ?? "") ?? 1001000,
+                "platform": "ios", "version": self.version, "build": Int(Bundle.main.infoDictionary?["CFBundleVersion"] as? String ?? "") ?? 1001001,
                 "enrolled": self.enrolled, "deviceId": self.orNull(self.keychainGet("device")), "personId": self.orNull(self.keychainGet("person")),
                 "notifications": settings.authorizationStatus == .authorized, "pushReady": false, "pushActive": false,
             ])

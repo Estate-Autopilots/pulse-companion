@@ -43,6 +43,9 @@ public class InboxWorker extends Worker {
             return Result.success();
         } catch (Gateway.Revoked e) {
             return Result.success();
+        } catch (Gateway.Failed e) {
+            if (e.status == 401) { Gateway.forget(context); return Result.success(); }
+            return getRunAttemptCount() < 3 ? Result.retry() : Result.success();
         } catch (IOException | JSONException e) {
             return getRunAttemptCount() < 3 ? Result.retry() : Result.success();
         }
