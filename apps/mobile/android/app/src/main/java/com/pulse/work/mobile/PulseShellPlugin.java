@@ -41,6 +41,8 @@ import org.json.JSONObject;
     permissions = {
         @Permission(alias = "location", strings = { Manifest.permission.ACCESS_FINE_LOCATION, Manifest.permission.ACCESS_COARSE_LOCATION }),
         @Permission(alias = "notifications", strings = { Manifest.permission.POST_NOTIFICATIONS }),
+        // PRESENCE-ONBOARD: geofences fire with Pulse closed only with "Allow all the time" (asked separately, on a tap).
+        @Permission(alias = "background", strings = { Manifest.permission.ACCESS_BACKGROUND_LOCATION }),
     }
 )
 public class PulseShellPlugin extends Plugin {
@@ -151,6 +153,7 @@ public class PulseShellPlugin extends Plugin {
                         Gateway.remember(getContext(), r);
                         pairing = null;
                         InboxWorker.schedule(getContext());
+                        OfficeArrival.sync(getContext());
                         health();
                         JSObject out = new JSObject();
                         out.put("deviceId", r.getString("deviceId"));
@@ -196,6 +199,7 @@ public class PulseShellPlugin extends Plugin {
                 // Already revoked by the web sign-out, or offline: the server ends it with the session anyway.
             }
             Gateway.forget(c);
+            OfficeArrival.stop(c);
             Notifier.badge(c, 0);
             call.resolve();
         });
@@ -270,7 +274,10 @@ public class PulseShellPlugin extends Plugin {
                 String token = Gateway.accessToken(getContext());
                 Boolean enabled = call.getBoolean("enabled");
                 if (enabled != null) Gateway.post("companion/presence", new JSONObject().put("consent", enabled).put("autoConsent", false).put("consentOnly", true), token);
-                call.resolve(new JSObject(Gateway.get("companion/presence", token).toString()));
+                JSObject r = new JSObject(Gateway.get("companion/presence", token).toString());
+                OfficeArrival.sync(getContext());
+                r.put("arrival", new JSObject().put("location", OfficeArrival.located(getContext())).put("background", OfficeArrival.background(getContext())));
+                call.resolve(r);
             } catch (Exception e) { call.reject("Pulse could not read your office presence choice. Try again.", "presence"); }
         });
     }

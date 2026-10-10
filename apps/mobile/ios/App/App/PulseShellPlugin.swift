@@ -56,6 +56,8 @@ public class PulseShellPlugin: CAPPlugin, CAPBridgedPlugin, CLLocationManagerDel
     private var refreshing = false
     private var tokenWaiters: [(String?) -> Void] = []
     private var locator: CLLocationManager?
+    /// PRESENCE-ONBOARD: iOS watches circular regions around the person's offices (with "Always", asked on a tap).
+    private var regions: CLLocationManager?
     private var locationCall: CAPPluginCall?
     private var locationTimeout: DispatchWorkItem?
 
@@ -209,6 +211,7 @@ public class PulseShellPlugin: CAPPlugin, CAPBridgedPlugin, CLLocationManagerDel
     }
 
     @objc func signOut(_ call: CAPPluginCall) {
+        stopOffices()
         guard enrolled, let device = keychainGet("device") else { forget(); return call.resolve() }
         accessToken { token in
             guard let token = token else { self.forget(); return call.resolve() }
@@ -277,9 +280,74 @@ public class PulseShellPlugin: CAPPlugin, CAPBridgedPlugin, CLLocationManagerDel
             if let enabled = call.getBool("enabled") {
                 self.gateway("companion/presence", ["consent": enabled, "autoConsent": false, "consentOnly": true], bearer: token) { status, _ in
                     guard status == 200 else { return call.reject("Pulse could not save your office presence choice. Try again.", "presence") }
+                    // Turning helpers on is the tap that may ask iOS for "Always" (office arrival with Pulse closed).
+                    if enabled { DispatchQueue.main.async { let m = self.regions ?? CLLocationManager(); m.delegate = self; self.regions = m; m.requestAlwaysAuthorization() } }
+                    self.monitorOffices()
                     read()
                 }
-            } else { read() }
+            } else { self.monitorOffices(); read() }
+        }
+    }
+
+    /// A region event can relaunch Pulse in the background: a manager with a delegate must exist at once to receive it.
+    override public func load() {
+        DispatchQueue.main.async {
+            let manager = CLLocationManager()
+            manager.delegate = self
+            self.regions = manager
+            if self.enrolled { self.monitorOffices() }
+        }
+    }
+
+    // MARK: Office arrival (PRESENCE-ONBOARD)
+    /// Regions around the person's offices, only while they agree. iOS wakes Pulse on entering or leaving; Pulse sends
+    /// "entered/left office X" to the server, which asks "Check in?" or, with HR's setting and two signals, checks in.
+    /// Never a position, never a journey; check-out is never automatic.
+    private func monitorOffices() {
+        accessToken { token in
+            guard let token = token else { return self.stopOffices() }
+            self.gateway("companion/presence", nil, bearer: token) { status, json in
+                DispatchQueue.main.async {
+                    guard status == 200, json["enabled"] as? Bool == true, let offices = json["offices"] as? [[String: Any]] else { return self.stopOffices() }
+                    let manager = self.regions ?? CLLocationManager()
+                    manager.delegate = self
+                    self.regions = manager
+                    guard CLLocationManager.isMonitoringAvailable(for: CLCircularRegion.self), manager.authorizationStatus == .authorizedAlways else { return }
+                    for region in manager.monitoredRegions where region.identifier.hasPrefix("office:") { manager.stopMonitoring(for: region) }
+                    for office in offices.prefix(15) {
+                        let number = { (key: String) -> Double? in (office[key] as? Double) ?? (office[key] as? String).flatMap(Double.init) }
+                        guard let id = office["id"] as? String, let lat = number("lat"), let lng = number("lng") else { continue }
+                        let radius = min(max(number("radius") ?? 150, 100), manager.maximumRegionMonitoringDistance)
+                        let region = CLCircularRegion(center: CLLocationCoordinate2D(latitude: lat, longitude: lng), radius: radius, identifier: "office:\(id)")
+                        region.notifyOnEntry = true
+                        region.notifyOnExit = true
+                        manager.startMonitoring(for: region)
+                    }
+                }
+            }
+        }
+    }
+
+    private func stopOffices() {
+        DispatchQueue.main.async {
+            guard let manager = self.regions else { return }
+            for region in manager.monitoredRegions where region.identifier.hasPrefix("office:") { manager.stopMonitoring(for: region) }
+        }
+    }
+
+    public func locationManager(_ manager: CLLocationManager, didEnterRegion region: CLRegion) { officeEvent(region, "enter") }
+    public func locationManager(_ manager: CLLocationManager, didExitRegion region: CLRegion) { officeEvent(region, "exit") }
+
+    private func officeEvent(_ region: CLRegion, _ kind: String) {
+        guard region.identifier.hasPrefix("office:") else { return }
+        let office = String(region.identifier.dropFirst("office:".count))
+        accessToken { token in
+            guard let token = token else { return }
+            // The choice is read again first: a withdrawal elsewhere stops this phone before anything is sent.
+            self.gateway("companion/presence", nil, bearer: token) { status, json in
+                guard status == 200, json["enabled"] as? Bool == true else { return self.stopOffices() }
+                self.gateway("companion/presence", ["officeId": office, "region": kind, "consent": true, "autoConsent": json["auto"] as? Bool ?? false], bearer: token) { _, _ in }
+            }
         }
     }
 
@@ -334,6 +402,7 @@ public class PulseShellPlugin: CAPPlugin, CAPBridgedPlugin, CLLocationManagerDel
     }
 
     public func locationManagerDidChangeAuthorization(_ manager: CLLocationManager) {
+        if manager === regions { if manager.authorizationStatus == .authorizedAlways { monitorOffices() }; return }
         guard locationCall != nil else { return }
         let state = manager.authorizationStatus
         if state == .authorizedWhenInUse || state == .authorizedAlways { manager.requestLocation() }

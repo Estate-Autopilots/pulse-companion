@@ -20,6 +20,10 @@ export type CompanionPayload = {
   streak: { onTime: number; firstCheckIn: boolean };
   waiting: { count: number; href: string } | null;
   presence: { dwellMinutes?:number; leaveMinutes?:number; autoCheckIn: boolean; offices: Office[]; sites: Site[] };
+  /** PRESENCE-ONBOARD: Pulse noticed the person at an office and asked "Check in?" (until they answer). */
+  arrival?: { at: string; office: string | null } | null;
+  /** This week's working days so far: on time, late, missed or not a working day. */
+  week?: { onTime: number; late: number; missed: number; days: { date: string; state: 'on_time' | 'late' | 'missed' | 'off' | 'today' }[] } | null;
 };
 
 export type View = {

@@ -41,6 +41,21 @@ final class Notifier {
 
     /** One notification per outbox item; tapping it opens that page in Pulse. */
     static void post(Context context, String id, String title, String body, String href) {
+        post(context, id, title, body, href, null);
+    }
+
+    /** PRESENCE-ONBOARD: attendance questions carry their one-tap answer (see {@link AttendanceAction}). */
+    static String answer(String eventType) {
+        if (eventType == null) return null;
+        switch (eventType) {
+            case "attendance.arrival": case "attendance.start": case "attendance.nudge": return "check-in";
+            case "attendance.break": return "break-end";
+            case "attendance.end": case "attendance.done": case "attendance.departure": return "check-out";
+            default: return null;
+        }
+    }
+
+    static void post(Context context, String id, String title, String body, String href, String eventType) {
         if (!enabled(context) || id == null || title == null || title.isEmpty()) return;
         Intent open = new Intent(context, MainActivity.class)
             .setAction("com.pulse.work.mobile.OPEN." + id)
@@ -58,11 +73,47 @@ final class Notifier {
             .setGroup(GROUP)
             .setNumber(Math.max(count, 1));
         if (body != null && !body.isEmpty()) b.setContentText(body);
+        String answer = answer(eventType);
+        if (answer != null) {
+            // The lock screen shows only "Pulse · attendance"; the button works after unlocking.
+            b.setVisibility(NotificationCompat.VISIBILITY_PRIVATE).setCategory(NotificationCompat.CATEGORY_REMINDER)
+                .setPublicVersion(new NotificationCompat.Builder(context, UPDATES).setSmallIcon(R.drawable.ic_stat_pulse).setContentTitle("Pulse · attendance").build())
+                .addAction(new NotificationCompat.Action.Builder(0, "check-in".equals(answer) ? "Check in" : "break-end".equals(answer) ? "Back" : "Check out",
+                    AttendanceAction.intent(context, answer, id)).setAuthenticationRequired(true).build());
+        }
         try {
             NotificationManagerCompat.from(context).notify(id, 1, b.build());
         } catch (SecurityException ignored) {
             // Permission withdrawn between the check and the post.
         }
+    }
+
+    /** The answer to an attendance notification replaces it: done, or open My desk to finish. */
+    static void attendanceDone(Context context, String id, String title, String text) {
+        Intent open = new Intent(context, MainActivity.class).setAction("com.pulse.work.mobile.DAY." + id)
+            .putExtra(MainActivity.EXTRA_HREF, "/me?tab=attendance").addFlags(Intent.FLAG_ACTIVITY_NEW_TASK | Intent.FLAG_ACTIVITY_SINGLE_TOP);
+        PendingIntent tap = PendingIntent.getActivity(context, ("day" + id).hashCode(), open, PendingIntent.FLAG_IMMUTABLE | PendingIntent.FLAG_UPDATE_CURRENT);
+        NotificationCompat.Builder b = new NotificationCompat.Builder(context, UPDATES).setSmallIcon(R.drawable.ic_stat_pulse).setColor(0xFF5B45D6)
+            .setContentTitle(title).setAutoCancel(true).setContentIntent(tap).setOnlyAlertOnce(true).setTimeoutAfter(10 * 60_000)
+            .setVisibility(NotificationCompat.VISIBILITY_PRIVATE);
+        if (text != null) b.setContentText(text);
+        try { NotificationManagerCompat.from(context).notify(id, 1, b.build()); } catch (SecurityException ignored) {}
+    }
+
+    /** "09:58" on the organisation's clock from an ISO time. */
+    static String clock(String iso, int offsetMinutes) {
+        if (iso == null || iso.isEmpty()) return null;
+        // minSdk 24: no java.time; the same parsing as the attendance widget.
+        for (String pattern : new String[] { "yyyy-MM-dd'T'HH:mm:ss.SSS'Z'", "yyyy-MM-dd'T'HH:mm:ss'Z'" }) {
+            try {
+                java.text.SimpleDateFormat in = new java.text.SimpleDateFormat(pattern, java.util.Locale.US);
+                in.setTimeZone(java.util.TimeZone.getTimeZone("UTC")); in.setLenient(false);
+                java.text.SimpleDateFormat out = new java.text.SimpleDateFormat("HH:mm", java.util.Locale.US);
+                out.setTimeZone(java.util.TimeZone.getTimeZone("UTC"));
+                return out.format(new java.util.Date(in.parse(iso).getTime() + offsetMinutes * 60_000L));
+            } catch (Exception ignored) {}
+        }
+        return null;
     }
 
     /** Shown right after notifications are turned on, so the person sees what a Pulse notification looks like. */

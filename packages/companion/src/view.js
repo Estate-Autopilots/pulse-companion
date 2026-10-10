@@ -115,13 +115,13 @@ export function deriveView(payload, at = Date.now(), options = {}) {
       subtitle: options.celebrate && celebration(payload) ? celebration(payload) : entry?.late ? `In at ${clockOf(entry.in, offset)} · ${duration(entry.late * 60)} after the shift start` : `In at ${clockOf(entry.in, offset)}${live.breakTotal >= 60 ? ` · ${duration(live.breakTotal)} on breaks` : ''}`,
       timer: { seconds: live.worked, display: stopwatch(live.worked), label: 'worked today', running: true },
       chip: { tone: entry?.late ? 'warning' : 'success', text: `Checked in${mode ? ` · ${mode}` : ''}` },
-      actions: [act('break-start', 'Take a break'), act('check-out', 'Check out')] };
+      actions: [act('break-start', 'Break'), act('check-out', 'Check out')] };
   }
   if (state === 'break') {
     return { ...base, mood: 'break', title: 'On a break', subtitle: `Worked ${duration(live.worked)} so far. Take your time.`,
       timer: { seconds: live.onBreak, display: stopwatch(live.onBreak), label: 'on this break', running: true },
       chip: { tone: 'info', text: 'On a break' },
-      actions: [act('break-end', 'I’m back', true), act('check-out', 'Check out')] };
+      actions: [act('break-end', 'Back', true), act('check-out', 'Check out')] };
   }
   if (state === 'done') {
     return { ...base, mood: night ? 'sleepy' : 'done', title: 'Done for today', subtitle: `${duration(live.worked)} worked${entry?.out ? ` · out at ${clockOf(entry.out, offset)}` : ''}. See you tomorrow!`,
@@ -140,12 +140,14 @@ export function deriveView(payload, at = Date.now(), options = {}) {
   const soon = Number.isFinite(startAt) && at >= startAt - 45 * 60000 && at < startAt + 15 * 60000;
   const pastGrace = Number.isFinite(startAt) && at > startAt + (shift.graceMinutes ?? 0) * 60000;
   const afterEnd = Number.isFinite(endAt) && at > endAt;
-  const title = afterEnd ? 'Shift is over' : soon ? 'Ready when you are' : beforeStart ? 'Not checked in yet' : pastGrace ? 'Not checked in yet' : 'Ready when you are';
-  const subtitle = afterEnd ? 'No check-in today. Working late? Check in to log it.'
+  // PRESENCE-ONBOARD: the server noticed the person at an office and asks "Check in?" on every surface.
+  const arrived = payload.arrival && shift.workingDay ? (payload.arrival.office ? `You’re at ${payload.arrival.office}` : 'You’re at the office') : null;
+  const title = arrived ?? (afterEnd ? 'Shift is over' : soon ? 'Ready when you are' : beforeStart ? 'Not checked in yet' : pastGrace ? 'Not checked in yet' : 'Ready when you are');
+  const subtitle = arrived ? 'Pulse noticed your arrival. One tap checks you in.' : afterEnd ? 'No check-in today. Working late? Check in to log it.'
     : beforeStart ? `Your shift starts at ${friendlyClock(shift.start)}. On time until ${friendlyClock(onTimeBy)}.`
     : pastGrace ? `The shift started at ${friendlyClock(shift.start)}. Checking in now marks you late.` : `On time until ${friendlyClock(onTimeBy)}.`;
   const countdown = beforeStart ? Math.floor((startAt - at) / 1000) : 0;
-  return { ...base, mood: night && !soon ? 'sleepy' : soon ? 'waking' : 'idle', title, subtitle,
+  return { ...base, mood: arrived ? 'waking' : night && !soon ? 'sleepy' : soon ? 'waking' : 'idle', title, subtitle,
     timer: beforeStart && countdown <= 12 * 3600 ? { seconds: countdown, display: stopwatch(countdown), label: 'until your shift', running: true } : null,
     chip: { tone: pastGrace && !afterEnd ? 'warning' : 'neutral', text: 'Not checked in' },
     actions: [act('check-in', 'Check in', true)], showModes: true };
