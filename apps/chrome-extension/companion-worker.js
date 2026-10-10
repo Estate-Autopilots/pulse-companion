@@ -22,7 +22,7 @@ async function checkUpdates() {
   finally { checkingUpdates = false; }
 }
 const TONE = { success: '#328267', info: '#4167cf', warning: '#9a6209', neutral: '#66687e' };
-const ACTION_LABEL = { 'check-in': 'Check in', 'break-start': 'Take a break', 'break-end': 'I’m back', 'check-out': 'Check out' };
+const ACTION_LABEL = { 'check-in': 'Check in', 'break-start': 'Break', 'break-end': 'Back', 'check-out': 'Check out' };
 const version = chrome.runtime.getManifest().version;
 let demo = null;
 let polling = false;

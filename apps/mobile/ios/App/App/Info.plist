@@ -51,6 +51,8 @@
 	<array>
 		<string>arm64</string>
 	</array>
+	<key>NSLocationAlwaysAndWhenInUseUsageDescription</key>
+	<string>With your agreement, Pulse notices when you arrive at or leave your office, so checking in is one tap. iOS wakes Pulse only at those moments; Pulse sends which office, never where you are, and keeps no location history.</string>
 	<key>NSLocationWhenInUseUsageDescription</key>
 	<string>Pulse reads your position only when you tap to check in, to confirm you are at an office. Pulse keeps no location history.</string>
 	<key>ITSAppUsesNonExemptEncryption</key>

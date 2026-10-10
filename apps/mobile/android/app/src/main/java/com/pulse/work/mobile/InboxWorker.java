@@ -71,7 +71,7 @@ public class InboxWorker extends Worker {
             if (rows != null) for (int i = 0; i < rows.length(); i++) {
                 JSONObject row = rows.getJSONObject(i);
                 if (!row.optBoolean("pingAllowed")) continue;
-                if (notify) Notifier.post(context, row.optString("id"), row.optString("title"), row.optString("detail", ""), row.optString("href", "/inbox"));
+                if (notify) Notifier.post(context, row.optString("id"), row.optString("title"), row.optString("detail", ""), row.optString("href", "/inbox"), row.optString("eventType", null));
                 received.put(row.optString("id"));
             }
             if (received.length() > 0) Gateway.post("companion/ack", Gateway.json("ids", received), token);

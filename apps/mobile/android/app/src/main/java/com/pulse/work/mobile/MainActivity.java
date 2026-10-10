@@ -67,7 +67,7 @@ public class MainActivity extends BridgeActivity {
             }
         });
         Notifier.channels(this);
-        if (ShellStore.enrolled(this)) InboxWorker.schedule(this);
+        if (ShellStore.enrolled(this)) { InboxWorker.schedule(this); OfficeArrival.sync(this); }
         // Capacitor records the first intent but does not navigate to it. App Links and notification taps must
         // also open their target when Android creates the activity, not just when it reuses a running one.
         open(getIntent());
