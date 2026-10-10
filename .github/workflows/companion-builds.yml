@@ -86,6 +86,8 @@ jobs:
             apps/desktop/core
             apps/desktop/src-tauri
       - run: corepack enable && pnpm install --frozen-lockfile
+      # The panel tests open the real quick panel in Chromium (R20b); without it the test step waits forever.
+      - run: pnpm --dir apps/desktop exec playwright install chromium
       - run: node --test --test-concurrency=2 packages/companion/test/*.test.js
       - run: pnpm --dir apps/desktop run build && pnpm --dir apps/desktop test
       - run: cargo test -j2 --manifest-path apps/desktop/core/Cargo.toml -- --test-threads=2
