@@ -22,6 +22,10 @@ on:
         description: Text that proves the sign-in page is shown (acceptance)
         type: string
         default: Username
+      qa_phases:
+        description: QA-E2E emulator phases to run instead of each image's own list (e.g. wifi)
+        type: string
+        default: ''
 permissions:
   contents: read
   actions: read
@@ -198,7 +202,7 @@ jobs:
           emulator-options: -no-window -gpu lavapipe -feature -Vulkan -noaudio -no-boot-anim -no-snapshot
           disable-animations: true
           pre-emulator-launch-script: bash apps/mobile/scripts/log-emulator.sh
-          script: bash apps/mobile/scripts/android-qa.sh "apk/Pulse-${{ needs.prepare.outputs.version }}-android.apk" "apk/Pulse-${{ needs.prepare.outputs.version }}-android-tests.apk" "qa-${{ matrix.name }}" "${{ matrix.phases }}"
+          script: bash apps/mobile/scripts/android-qa.sh "apk/Pulse-${{ needs.prepare.outputs.version }}-android.apk" "apk/Pulse-${{ needs.prepare.outputs.version }}-android-tests.apk" "qa-${{ matrix.name }}" "${{ inputs.qa_phases || matrix.phases }}"
       - uses: actions/upload-artifact@v7
         if: always()
         with:

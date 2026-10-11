@@ -286,28 +286,39 @@ fi
 
 # ---------------------------------------------------------------------------------------------- 5. the office Wi-Fi rule
 if phase wifi; then
-  adb shell pm grant $PKG android.permission.ACCESS_FINE_LOCATION 2>/dev/null; adb shell pm grant $PKG android.permission.ACCESS_COARSE_LOCATION 2>/dev/null
-  adb shell cmd location set-location-enabled true 2>/dev/null || true
   ssid=$(adb shell dumpsys wifi | grep -m1 -oE 'SSID: "[^"]+"' | cut -d'"' -f2); ssid=${ssid:-AndroidWifi}
-  if session wifi; then
-    step enrol >/dev/null
-    step presence --es ssid "$ssid" >/dev/null; step sync >/dev/null; sleep 3
-    step wifi-raw >/dev/null; echo "$STEP_OUT" > "$OUT/wifi-raw.json"
-    step wifi; out=$STEP_OUT; result wifi_office_network "$( echo "$out" | grep -q "\"ssid\":\"$ssid\"" && echo pass || echo fail)" "joined network '$ssid' matched: $(json "$out" "d.get('wifi')")"
-    step presence --es ssid Other-Network >/dev/null; step sync >/dev/null; sleep 3
-    step wifi; out=$STEP_OUT; result wifi_other_network "$( echo "$out" | grep -q '"wifi":null' && echo pass || echo fail)" "a network that is not the office sends nothing"
-    # A real join: Android wakes Pulse (registered network callback) and Pulse reports the office network.
+  adb shell cmd location set-location-enabled true 2>/dev/null || true
+  # wifi_check NAME: what the shell can read and send about the joined network, in a fresh session, with the
+  # location permissions granted before it (a woken-up OfficeArrival runs in the background, like this test).
+  wifi_check() {
+    local name=$1
+    session "$name" || return
+    step enrol >/dev/null; step presence --es ssid "$ssid" >/dev/null; step sync >/dev/null; sleep 3
+    step wifi-raw >/dev/null; echo "$STEP_OUT" > "$OUT/$name-raw.json"; raw=$(json "$STEP_OUT" "d.get('ssid')")
+    step wifi; out=$STEP_OUT; matched=$(json "$out" "d.get('wifi')")
+    step presence --es ssid Other-Network >/dev/null; step sync >/dev/null; sleep 2
+    step wifi; other=$(json "$STEP_OUT" "d.get('wifi')")
+    # A real join: Android wakes Pulse through its registered network callback.
     step presence --es ssid "$ssid" >/dev/null; step netwatch >/dev/null; step sync >/dev/null; sleep 5
     before=$(journal | grep -c '"event":"presence"')
     adb shell svc wifi disable; sleep 6; adb shell svc wifi enable
-    end=$((SECONDS + 90)); got=
+    local end=$((SECONDS + 90)); got=
     while (( SECONDS < end )); do [ "$(journal | grep -c '"event":"presence"')" -gt "$before" ] && { got=$(journal | grep '"event":"presence"' | tail -1); break; }; sleep 3; done
-    result wifi_join_reported "$( echo "$got" | grep -q "\"ssid\":\"$ssid\"" && echo pass || echo fail)" "$(echo "$got" | cut -c1-220)"
-    echo "$got" | grep -qE '"lat"|"lng"|"latitude"' && result wifi_no_position fail "a position was sent" || result wifi_no_position pass "no position in the report"
-    end_session wifi
-  fi
+    end_session "$name"
+  }
+  adb shell pm grant $PKG android.permission.ACCESS_FINE_LOCATION 2>/dev/null; adb shell pm grant $PKG android.permission.ACCESS_COARSE_LOCATION 2>/dev/null
+  adb shell pm revoke $PKG android.permission.ACCESS_BACKGROUND_LOCATION 2>/dev/null
+  wifi_check wifi
+  result wifi_while_using_only info "location while using only: Android shows the shell '$raw' in the background; office match: $matched; on a real join: ${got:-nothing sent}"
+  result wifi_other_network "$( [ "$other" = None ] && echo pass || echo fail)" "a network that is not the office sends nothing"
+  # With "Allow all the time" (as for geofences) Android reveals the network to a woken-up Pulse.
+  adb shell pm grant $PKG android.permission.ACCESS_BACKGROUND_LOCATION 2>/dev/null
+  wifi_check wifi-background
+  result wifi_office_network "$( echo "$matched" | grep -q "'$ssid'" && echo pass || echo fail)" "Allow all the time: Android shows '$raw'; office match: $matched"
+  result wifi_join_reported "$( echo "$got" | grep -q "\"ssid\":\"$ssid\"" && echo pass || echo fail)" "$(echo "${got:-nothing sent}" | cut -c1-220)"
+  echo "$got" | grep -qE '"lat"|"lng"|"latitude"' && result wifi_no_position fail "a position was sent" || result wifi_no_position pass "no position in the report"
   # Without location permission Android hides the network name: nothing is sent.
-  adb shell pm revoke $PKG android.permission.ACCESS_FINE_LOCATION 2>/dev/null; adb shell pm revoke $PKG android.permission.ACCESS_COARSE_LOCATION 2>/dev/null
+  for p in ACCESS_BACKGROUND_LOCATION ACCESS_FINE_LOCATION ACCESS_COARSE_LOCATION; do adb shell pm revoke $PKG android.permission.$p 2>/dev/null; done
   if session wifi-denied; then
     step enrol >/dev/null; step presence --es ssid "$ssid" >/dev/null; step sync >/dev/null; sleep 3
     step wifi; out=$STEP_OUT; result wifi_without_permission "$( echo "$out" | grep -q '"wifi":null' && echo pass || echo fail)" "no permission: nothing is read or sent"
