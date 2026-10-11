@@ -321,6 +321,7 @@ if phase wifi; then
     adb shell svc wifi disable; sleep 6; adb shell svc wifi enable
     local end=$((SECONDS + 90)); got=
     while (( SECONDS < end )); do [ "$(journal | grep -c '"event":"presence"')" -gt "$before" ] && { got=$(journal | grep '"event":"presence"' | tail -1); break; }; sleep 3; done
+    adb logcat -d -v time -s PulseArrival > "$OUT/$name-arrival-log.txt" 2>/dev/null || true
     end_session "$name"
   }
   adb shell pm grant $PKG android.permission.ACCESS_FINE_LOCATION 2>/dev/null; adb shell pm grant $PKG android.permission.ACCESS_COARSE_LOCATION 2>/dev/null
@@ -330,7 +331,10 @@ if phase wifi; then
   result wifi_other_network "$( [ "$other" = None ] && echo pass || echo fail)" "a network that is not the office sends nothing"
   # With "Allow all the time" (as for geofences) Android reveals the network to a woken-up Pulse.
   adb shell pm grant $PKG android.permission.ACCESS_BACKGROUND_LOCATION 2>/dev/null
+  adb logcat -c 2>/dev/null || true
   wifi_check wifi-background
+  wakes=$(grep -c 'woken: com.pulse.work.mobile.OFFICE_NETWORK' "$OUT/wifi-background-arrival-log.txt" 2>/dev/null || echo 0)
+  result wifi_wakeups info "Android woke Pulse for a network change $wakes time(s) during the session: $(tr '\n' ' ' < "$OUT/wifi-background-arrival-log.txt" 2>/dev/null | grep -oE 'network: [^(]*' | sort | uniq -c | tr '\n' ';')"
   result wifi_office_network "$( echo "$matched" | grep -q "'$ssid'" && echo pass || echo fail)" "Allow all the time: Android shows '$raw'; office match: $matched"
   result wifi_join_reported "$( echo "$got" | grep -q "\"ssid\":\"$ssid\"" && echo pass || echo fail)" "$(echo "${got:-nothing sent}" | cut -c1-220)"
   echo "$got" | grep -qE '"lat"|"lng"|"latitude"' && result wifi_no_position fail "a position was sent" || result wifi_no_position pass "no position in the report"
