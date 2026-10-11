@@ -62,6 +62,7 @@ public class QaSessionTest {
     volatile JSONArray updates = new JSONArray();
     volatile String dayState = "out";
     volatile boolean updatesOnce = true;
+    volatile int total = 0;
     LocationCallback keepAlive;
 
     synchronized void log(JSONObject line) {
@@ -85,7 +86,8 @@ public class QaSessionTest {
             if (path.equals("companion")) return day();
             if (path.startsWith("companion/updates")) {
                 JSONArray rows = updates; if (updatesOnce) updates = new JSONArray();
-                return new JSONObject().put("rows", rows).put("counts", new JSONObject().put("total", rows.length()).put("chats", 1)).put("cursor", "2026-10-11T00:00:00.000Z").put("hasMore", false);
+                // The server's unread total stays until the items are read (0 would make the shell clear its notifications).
+                return new JSONObject().put("rows", rows).put("counts", new JSONObject().put("total", total).put("chats", 1)).put("cursor", "2026-10-11T00:00:00.000Z").put("hasMore", false);
             }
             if (path.equals("companion/ack")) { log("ack", "ids", body == null ? null : body.optJSONArray("ids")); return new JSONObject().put("ok", true); }
             if (path.startsWith("attendance/")) { log("attendance", "path", path, "body", body); dayState = path.endsWith("check-out") ? "done" : "in"; return new JSONObject().put("id", "synthetic-entry"); }
@@ -204,7 +206,7 @@ public class QaSessionTest {
                 cm.registerNetworkCallback(new android.net.NetworkRequest.Builder().addTransportType(android.net.NetworkCapabilities.TRANSPORT_WIFI).build(), cb);
                 break;
             }
-            case "updates": updates = new JSONArray(i.getStringExtra("rows")); updatesOnce = i.getBooleanExtra("once", true); break;
+            case "updates": updates = new JSONArray(i.getStringExtra("rows")); updatesOnce = i.getBooleanExtra("once", true); total = i.getIntExtra("total", updates.length()); break;
             case "inbox": done.put("total", InboxWorker.check(c, i.getBooleanExtra("notify", true))).put("notifications", notifications()); break;
             case "inbox-work": InboxWorker.runNow(c); break;
             case "notifications": done.put("notifications", notifications()).put("enabled", Notifier.enabled(c)); break;
@@ -246,8 +248,9 @@ public class QaSessionTest {
                 // A page with the controls the shell must serve natively: a file field (uploads) and a PDF the page made
                 // (downloads go through the bridge's saveFile). Loaded into the real WebView with the shell's own clients.
                 Activity a = resumed();
+                String accept = i.getStringExtra("accept") == null ? "image/*,application/pdf" : i.getStringExtra("accept");
                 String html = "<!doctype html><meta name=viewport content='width=device-width'><body style='font:18px sans-serif;padding:24px'>"
-                    + "<h1>QA upload and download</h1><p><input id=f type=file accept='image/*,application/pdf' style='font-size:20px'></p>"
+                    + "<h1>QA upload and download</h1><p><input id=f type=file" + (accept.isEmpty() ? "" : " accept='" + accept + "'") + " style='font-size:20px'></p>"
                     + "<p><a id=d download='Payslip-synthetic.pdf' href='data:application/pdf;base64,JVBERi0xLjQKJSBzeW50aGV0aWMgcGF5c2xpcAolJUVPRgo='>Download synthetic payslip</a></p>"
                     + "<p id=o>none</p><script>f.onchange=()=>{o.textContent='picked:'+(f.files[0]?f.files[0].name+':'+f.files[0].size:'none');document.body.dataset.qa=o.textContent}</script>";
                 if (a instanceof MainActivity) InstrumentationRegistry.getInstrumentation().runOnMainSync(() -> ((MainActivity) a).getBridge().getWebView().loadDataWithBaseURL(MainActivity.ORIGIN + "/qa", html, "text/html", "utf-8", null));
@@ -267,6 +270,18 @@ public class QaSessionTest {
                 break;
             }
             case "forget": Gateway.forget(c); break;
+            case "watch-pending": {
+                // A widget tap stores its pending action before the page loads; catch it as it appears.
+                new Thread(() -> {
+                    for (int k = 0; k < 200; k++) {
+                        String p = ShellStore.get(c, AttendanceSurfaces.PENDING);
+                        if (p != null && p.contains("action")) { log("pending-seen", "pending", p); return; }
+                        SystemClock.sleep(100);
+                    }
+                    log("pending-seen", "pending", null);
+                }).start();
+                break;
+            }
             case "stop": stop.countDown(); break;
             default: done.put("error", "unknown step");
         }

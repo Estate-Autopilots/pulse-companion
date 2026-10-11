@@ -145,11 +145,7 @@ if phase notifications; then
     result arrival_lock_screen "$( echo "$pub" | grep -q 'Pulse · attendance' && echo pass || echo fail)" "lock screen shows $pub"
     acks=$(journal | grep '"event":"ack"' | tail -1)
     result ack_received_items "$( echo "$acks" | grep -q 000000000004 && ! echo "$acks" | grep -q 000000000005 && echo pass || echo fail)" "the phone acknowledges what it showed"
-    adb shell cmd statusbar expand-notifications; sleep 2; shot n1-shade; dump > "$OUT/n1-shade.xml"
-    # Tap the chat notification in the shade: Pulse opens on that conversation.
-    if tap_text 'Arjun sent you a message'; then sleep 6; step url; url=$STEP_OUT; echo "$url" > "$OUT/n2-opened.json"; shot n2-opened-chat
-      result tap_opens_page "$( echo "$url" | grep -qE 'chats(%3F|\?)channel(%3D|=)'"$chat"'|next=%2Fchats' && echo pass || echo fail)" "$(json "$url" "d.get('url','')[:120]")"
-    else result tap_opens_page fail "chat notification not in the shade"; fi
+    adb shell cmd statusbar expand-notifications; sleep 2; shot n1-shade; dump > "$OUT/n1-shade.xml"; adb shell cmd statusbar collapse
     # The arrival's own button: Check in without opening Pulse. In the shade the four notifications are bundled, so the
     # button shows only on an expanded notification: try the shade first, then press it through the session.
     adb shell input keyevent KEYCODE_HOME; adb shell cmd statusbar expand-notifications; sleep 2; shot n3-shade-bundled
@@ -166,6 +162,16 @@ if phase notifications; then
     t0=$SECONDS; step inbox-work >/dev/null; seen=
     while (( SECONDS - t0 < 120 )); do step notifications; out=$STEP_OUT; echo "$out" | grep -q 'Background check works' && { seen=$((SECONDS - t0)); break; }; sleep 3; done
     result workmanager_background "$( [ -n "$seen" ] && echo pass || echo fail)" "${seen:-none} s from enqueue to notification with Pulse in the back"
+    # Last: tap the chat notification in the shade. Pulse opens on that conversation (signed out here, so through the
+    # sign-in page, whose ShellSignedOut also ends this synthetic registration: that is why this runs last).
+    step updates "--es rows '[{\"id\":\"10000000-0000-4000-8000-000000000011\",\"title\":\"Arjun sent you a message\",\"href\":\"/chats?channel=$chat\",\"eventType\":\"chat.message\",\"pingAllowed\":true}]' --ei total 1" >/dev/null
+    step inbox --ez notify true >/dev/null
+    adb shell cmd statusbar expand-notifications; sleep 2
+    if tap_text 'Arjun sent you a message'; then sleep 6; step url; url=$STEP_OUT; echo "$url" > "$OUT/n2-opened.json"; shot n2-opened-chat
+      result tap_opens_page "$( echo "$url" | grep -qE 'chats(%3F|\?)channel(%3D|=)'"$chat"'|next=%2Fchats' && echo pass || echo fail)" "$(json "$url" "d.get('url','')[:120]")"
+      revoked=$(journal | grep -c 'devices\\/synthetic-qa-device\\/revoke')
+      result signed_out_page_revokes_phone info "the sign-in page inside the app revoked the phone's registration: $revoked call(s); Pulse's notifications cleared"
+    else result tap_opens_page fail "chat notification not in the shade"; fi
     end_session notifications
   fi
   # Notifications denied: nothing is shown. Does the phone still acknowledge the items as received?
@@ -201,8 +207,10 @@ if phase widget; then
     if grep -qE 'forgotten: .*(Since yesterday|Fix time)' "$OUT/widget-texts.txt"; then result widget_forgotten_session pass "$(grep 'forgotten:' "$OUT/widget-texts.txt" | cut -c1-160)"; else result widget_forgotten_session info "$(grep 'forgotten:' "$OUT/widget-texts.txt" | cut -c1-160)"; fi
     # Tap the widget's main button while checked in: Pulse opens My desk with a pending check-out to confirm.
     step fixture --es state in >/dev/null; sleep 3
+    step watch-pending >/dev/null
     if tap_text '^Check out$'; then sleep 6; shot w2-after-tap
-      step pending; out=$STEP_OUT; result widget_tap_check_out "$( echo "$out" | grep -q '"action":"check-out"' && echo pass || echo fail)" "$(json "$out" "d.get('pending')")"
+      seen=$(journal | grep '"event":"pending-seen"' | tail -1)
+      result widget_tap_check_out "$( echo "$seen" | grep -q 'check-out' && echo pass || echo fail)" "pending action the page confirms: $(echo "$seen" | cut -c1-200)"
       step url; url=$STEP_OUT; result widget_tap_opens "$( echo "$url" | grep -qE '/me|next=%2Fme' && echo pass || echo fail)" "$(json "$url" "d.get('url','')[:100]")"
     else result widget_tap_check_out fail "no Check out button on the widget"; fi
     adb shell input keyevent KEYCODE_HOME; sleep 1
@@ -257,15 +265,24 @@ print(f[-1].group(4) if f else 'none')")
     adb shell am start -W -n "$ACT" >/dev/null; wait_text "$SIGNIN" 60
     step inject; out=$STEP_OUT; sleep 4; shot l4-qa-page
     if echo "$out" | grep -q '"injected":true'; then
-      # Upload first (a fresh page): the field opens the shell's chooser (camera beside Photos and Files).
+      # The chooser each of Pulse's own file fields gets (Android's WebView builds the picker from the FIRST accepted
+      # type): onboarding ID documents, task proof, and chat attachments (no filter).
+      for field in "id-document:application/pdf,image/jpeg,image/png,image/webp" "task-proof:application/pdf,image/*,.csv,.txt,.zip,.docx,.xlsx,.pptx" "chat:"; do
+        name=${field%%:*}; accept=${field#*:}
+        step inject --es accept "'$accept'" >/dev/null; sleep 3
+        tap_text 'Choose File|No file chosen|Browse' || adb shell input tap 300 620; sleep 4; shot "l6-chooser-$name"
+        result "upload_chooser_$name" info "accept '$accept': $(texts | sed 's/.*No file chosen//' | cut -c1-160)"
+        adb shell input keyevent KEYCODE_BACK; sleep 2
+      done
+      step inject >/dev/null; sleep 3
       tap_text 'Choose File|No file chosen|Browse' || adb shell input tap 300 620; sleep 4; shot l6-chooser; dump > "$OUT/l6.xml"
-      chooser=$(grep -oE 'text="Add a photo or file"' "$OUT/l6.xml" | head -1)
-      result upload_chooser "$( [ -n "$chooser" ] && echo pass || echo info)" "chooser: $(texts | cut -c1-200)"
+      result upload_chooser info "chooser: $(texts | cut -c1-200)"
       tap_text '^Files$|Documents|Browse' || true; sleep 4; shot l6-files
       tap_text 'qa-upload' || { tap_text 'Show roots|Downloads'; sleep 2; tap_text 'qa-upload'; } || true; sleep 4; shot l7-after-pick
       step eval --es js "'document.body.dataset.qa||document.getElementById(\"o\").textContent'"; picked=$STEP_OUT
       result upload_file "$( echo "$picked" | grep -q 'picked:qa-upload.pdf' && echo pass || echo info)" "$(json "$picked" "d.get('result')")"
       # A PDF the page made itself (bridge saveFile), with the name the page gave it.
+      adb shell input keyevent KEYCODE_BACK; sleep 2; adb shell am start -n "$ACT" >/dev/null; sleep 2
       step inject >/dev/null; sleep 3
       tap_text 'Download synthetic payslip'; sleep 5; shot l5-download; dump > "$OUT/l5.xml"
       step downloads; files=$STEP_OUT
