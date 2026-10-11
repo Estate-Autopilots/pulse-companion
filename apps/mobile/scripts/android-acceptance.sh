@@ -146,6 +146,55 @@ adb shell cmd uimode night no || true
 pass cold_launch_sign_in "360x780 and 390x844, light and dark"
 
 ready
+# 2b. POLISH-1 edges: Pulse draws edge to edge on every Android version (the page's header colours the status bar and
+# pads by env(safe-area-inset-top) once). Gesture and 3-button navigation, 360 and 390 px, light and dark: the screen,
+# the bars' frames and the WebView's bounds are recorded for each (edges.txt). The WebView must reach the top of the
+# screen (under the status bar) unless Capacitor pads the window itself for an old WebView; then the page gets no inset.
+: > "$OUT/edges.txt"
+# The emulator's own navigation mode, put back afterwards (changing it restarts the app's activity).
+nav_before=$(adb shell cmd overlay list 2>/dev/null | grep -oE '\[x\] com\.android\.internal\.systemui\.navbar\.[a-z]+' | head -1 | awk '{print $2}' | tr -d '\r' || true)
+for nav in gestural threebutton; do
+  adb shell cmd overlay enable-exclusive --category "com.android.internal.systemui.navbar.$nav" >/dev/null 2>&1 || true
+  sleep 3
+  for size in 1080x2340:360 1170x2532:390; do
+    adb shell wm size "${size%%:*}"
+    for theme in no yes; do
+      adb shell am force-stop $PKG; adb shell cmd uimode night "$theme" || true; sleep 2
+      adb shell am start -W -n "$ACT" >/dev/null
+      wait_text "$SIGNIN" 120
+      name="2b-edges-$nav-${size##*:}-$([ "$theme" = yes ] && echo dark || echo light)"
+      shot "$name"
+      # The insets' wording differs between Android versions ("type=statusBars frame=" / "mType=statusBars, mFrame=").
+      bars=$(adb shell dumpsys window | python3 -c "import re,sys; t=sys.stdin.read(); f=lambda k: (re.search(k+r'[^\[\n]{0,40}\[(\d+),(\d+)\]\[(\d+),(\d+)\]', t) or [None]*5); s=f('statusBars'); n=f('navigationBars'); print('status=%s nav=%s' % (s[4] if s[0] else 'none', '%s-%s' % (n[2], n[4]) if n[0] else 'none'))")
+      web=$(dump | python3 -c "import re,sys; m=re.search(r'class=\"android.webkit.WebView\"[^>]*bounds=\"(\[[0-9,]+\]\[[0-9,]+\])\"', sys.stdin.read()); print(m.group(1) if m else 'none')")
+      engine=$(adb shell dumpsys webviewupdate 2>/dev/null | grep -m1 -oE 'Current WebView package \(name, version\): \([^,]+, [0-9]+' | grep -oE '[0-9]+$' || echo 0)
+      echo "$name webview=$web engine=$engine $bars" | tee -a "$OUT/edges.txt"
+    done
+  done
+done
+[ -n "$nav_before" ] && adb shell cmd overlay enable-exclusive --category "$nav_before" >/dev/null 2>&1 || true
+adb shell wm size 1080x2340
+adb shell cmd uimode night no || true
+# A fresh start on the sign-in page, as after phase 2 (the overlay change above recreated the activity).
+sleep 3; adb shell am force-stop $PKG; sleep 2
+adb shell am start -W -n "$ACT" >/dev/null
+wait_text "$SIGNIN" 120
+python3 - "$OUT/edges.txt" <<'PY'
+import re, sys
+for line in open(sys.argv[1]):
+    web = re.search(r'webview=\[(\d+),(\d+)\]', line); bar = re.search(r'status=(\d+)', line)
+    engine = int(re.search(r'engine=(\d+)', line).group(1))
+    assert web and bar, f"no WebView or status bar in: {line}"
+    top, status = int(web.group(2)), int(bar.group(1))
+    # WebView 140+ (the owner's phone): the page reaches under the status bar and pads itself once. Older WebViews are
+    # padded by Capacitor and get no inset; either way nothing starts lower than the status bar's bottom.
+    assert top <= status, f"page starts below the status bar: {line}"
+    if engine >= 140: assert top == 0, f"not edge to edge with WebView {engine}: {line}"
+print("edges ok")
+PY
+pass edge_to_edge "gesture and 3-button navigation, 360 and 390, light and dark (edges.txt)"
+
+ready
 # 3. Back: through Pulse's history, then minimise at the start (never a blank page, never an exit).
 adb shell am start -W -n "$ACT" -a android.intent.action.VIEW -d "https://pulse.estateautopilots.com/apps/android" >/dev/null
 wait_text 'Pulse for Android' 60
@@ -210,12 +259,13 @@ R21_WIDGET_USER=$(adb shell am get-current-user | tr -d '\r')
 adb shell appwidget grantbind --package "$PKG" --user "$R21_WIDGET_USER"
 for permission in granted denied; do
   if [ "$permission" = granted ]; then adb shell pm grant $PKG android.permission.POST_NOTIFICATIONS; else adb shell pm revoke $PKG android.permission.POST_NOTIFICATIONS; fi
-  adb shell am instrument -w "$PKG.test/androidx.test.runner.AndroidJUnitRunner" > "$OUT/r21-native-$permission.txt"
+  adb shell am instrument -w -e class com.pulse.work.mobile.AttendanceSurfacesTest "$PKG.test/androidx.test.runner.AndroidJUnitRunner" > "$OUT/r21-native-$permission.txt"
   cat "$OUT/r21-native-$permission.txt"
-  grep -q 'OK (6 tests)' "$OUT/r21-native-$permission.txt"
+  grep -q 'OK (7 tests)' "$OUT/r21-native-$permission.txt"
   if grep -qE 'FAILURES|INSTRUMENTATION_FAILED|Process crashed' "$OUT/r21-native-$permission.txt"; then exit 1; fi
   adb pull "/sdcard/Android/data/$PKG/files/r21-widget.png" "$OUT/r21-widget-$permission.png"
-  pass "r21_native_surfaces_$permission" "6 synthetic native tests; no staff sign-in or attendance transport"
+  for state in in forgotten; do adb pull "/sdcard/Android/data/$PKG/files/polish1-widget-small-$state.png" "$OUT/polish1-widget-small-$state-$permission.png" || true; done
+  pass "r21_native_surfaces_$permission" "7 synthetic native tests; no staff sign-in or attendance transport"
 done
 adb shell appwidget revokebind --package "$PKG" --user "$R21_WIDGET_USER"
 adb shell am force-stop $PKG

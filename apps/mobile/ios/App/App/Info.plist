@@ -55,6 +55,8 @@
 	<string>With your agreement, Pulse notices when you arrive at or leave your office, so checking in is one tap. iOS wakes Pulse only at those moments; Pulse sends which office, never where you are, and keeps no location history.</string>
 	<key>NSLocationWhenInUseUsageDescription</key>
 	<string>Pulse reads your position only when you tap to check in, to confirm you are at an office. Pulse keeps no location history.</string>
+	<key>NSCameraUsageDescription</key>
+	<string>Take a photo for your Pulse profile or a contact, or of a document HR asked for. The photo is used only where you add it.</string>
 	<key>ITSAppUsesNonExemptEncryption</key>
 	<false/>
 	<key>UISupportedInterfaceOrientations</key>

@@ -158,6 +158,55 @@ jobs:
           if-no-files-found: ignore
           retention-days: 30
 
+  android-qa:
+    # QA-E2E: the shell around a synthetic Pulse on the emulator (apps/mobile/scripts/android-qa.sh; QaSessionTest
+    # answers the shell's gateway calls in-process, so no credential reaches a Pulse server). The AOSP image runs the
+    # notification prompt and notifications, the widget, lifecycle and the Wi-Fi rule; a Google APIs image runs the
+    # geofences (Android's geofences come from Play services) with spoofed GPS. Evidence only: publishing does not wait.
+    needs: [prepare, android]
+    runs-on: ubuntu-latest
+    timeout-minutes: 100
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - { name: aosp, target: default, phases: 'permissions,notifications,widget,lifecycle,wifi' }
+          - { name: google, target: google_apis, phases: 'geofence,wifi' }
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/download-artifact@v7
+        with: { name: 'phone-android-${{ github.sha }}', path: apk }
+      - name: Enable KVM
+        run: |
+          echo 'KERNEL=="kvm", GROUP="kvm", MODE="0666", OPTIONS+="static_node=kvm"' | sudo tee /etc/udev/rules.d/99-kvm4all.rules
+          sudo udevadm control --reload-rules && sudo udevadm trigger --name-match=kvm
+      - uses: reactivecircus/android-emulator-runner@v2
+        env:
+          RESUME_MINUTES: '30'
+          PULSE_SIGNIN_TEXT: 'Username|Sign in to Pulse'
+        with:
+          api-level: 34
+          emulator-build: 14788078
+          profile: pixel_7
+          arch: x86_64
+          target: ${{ matrix.target }}
+          cores: 2
+          ram-size: 3072M
+          heap-size: 512M
+          disk-size: 6000M
+          emulator-boot-timeout: 900
+          emulator-options: -no-window -gpu lavapipe -feature -Vulkan -noaudio -no-boot-anim -no-snapshot
+          disable-animations: true
+          pre-emulator-launch-script: bash apps/mobile/scripts/log-emulator.sh
+          script: bash apps/mobile/scripts/android-qa.sh "apk/Pulse-${{ needs.prepare.outputs.version }}-android.apk" "apk/Pulse-${{ needs.prepare.outputs.version }}-android-tests.apk" "qa-${{ matrix.name }}" "${{ matrix.phases }}"
+      - uses: actions/upload-artifact@v7
+        if: always()
+        with:
+          name: phone-android-qa-${{ matrix.name }}-${{ github.sha }}
+          path: qa-${{ matrix.name }}/
+          if-no-files-found: ignore
+          retention-days: 30
+
   ios:
     needs: prepare
     runs-on: macos-latest

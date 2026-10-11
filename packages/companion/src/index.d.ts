@@ -5,7 +5,9 @@ export type Mood = 'idle' | 'listening' | 'thinking' | 'new-message' | 'happy' |
 export type ActionId = 'check-in' | 'break-start' | 'break-end' | 'check-out';
 export type Mode = 'office' | 'wfh' | 'field';
 
-export type CompanionEntry = { id: string | null; date: string; in: string; out: string | null; mode: string; late: number; onBreak: boolean; breakStartedAt: string | null; closedBreakSeconds: number; synced?: string | null };
+export type CompanionEntry = { id: string | null; date: string; in: string; out: string | null; mode: string; late: number; onBreak: boolean; breakStartedAt: string | null; closedBreakSeconds: number; synced?: string | null;
+  /** POLISH-1: the person sent the time they left for this open session (a correction waiting for approval). */
+  correctionPending?: boolean };
 export type Office = { id: string; name: string; lat: number; lng: number; radius: number; wifi: { ssid: string; bssids: string[] }[] };
 export type Site = { id: string; name: string; lat: number; lng: number; radius: number; precision: 'exact' | 'building' };
 export type CompanionPayload = {

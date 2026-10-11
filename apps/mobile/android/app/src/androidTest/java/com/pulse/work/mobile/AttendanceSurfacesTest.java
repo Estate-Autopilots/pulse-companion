@@ -152,4 +152,67 @@ public class AttendanceSurfacesTest {
             });
         } finally { host[0].stopListening(); host[0].deleteAppWidgetId(id[0]); }
     }
+    /** POLISH-1: the small widget shows time worked as of the last read, and offers no check-out for yesterday's session.
+     *  Runs before zReal…, whose last tap opens Pulse (its background check then forgets the synthetic credential). */
+    @Test public void ySmallWidgetShowsTimeWorkedAndNeverChecksOutAForgottenSession() throws Exception {
+        AppWidgetManager manager = AppWidgetManager.getInstance(c);
+        AppWidgetProviderInfo provider = manager.getInstalledProviders().stream().filter(p -> p.provider.equals(new ComponentName(c, AttendanceWidgetSmall.class))).findFirst().orElse(null);
+        assertNotNull(provider);
+        AppWidgetHost[] host = new AppWidgetHost[1]; AppWidgetHostView[] view = new AppWidgetHostView[1]; int[] id = new int[1];
+        InstrumentationRegistry.getInstrumentation().runOnMainSync(() -> {
+            host[0] = new AppWidgetHost(c, 2102); id[0] = host[0].allocateAppWidgetId();
+            assertTrue("Emulator-only widget host permission missing", manager.bindAppWidgetIdIfAllowed(id[0], provider.provider));
+            view[0] = host[0].createView(c, id[0], provider); host[0].startListening();
+        });
+        try {
+            // Checked in at 09:58 India time, read at 14:05 with a finished 30-minute break: 3 h 37 min worked.
+            JSONObject s = fixture("in").put("updated", "2026-10-11T08:35:00.000Z").put("today", "2026-10-11").put("offset", 330)
+                .put("shiftStart", "10:00").put("shiftEnd", "19:00").put("entryDate", "2026-10-11").put("in", "2026-10-11T04:28:00.000Z")
+                .put("out", "").put("closedBreak", 1800).put("breakStarted", "");
+            ShellStore.put(c, AttendanceSurfaces.KEY, s.toString()); AttendanceSurfaces.renderWidget(c);
+            String[] seen = textOf(view[0], "Checked in · 09:58");
+            assertEquals("Checked in · 09:58", seen[0]);
+            assertEquals("3 h 37 min by 14:05", seen[1]);
+            assertEquals("Check out", seen[2]);
+            picture(view[0], 250, 110, "polish1-widget-small-in.png");
+            // Yesterday's session, read at 04:25 today: plain words and the app instead of a check-out at 04:25.
+            s.put("updated", "2026-10-10T22:55:00.000Z").put("entryDate", "2026-10-10").put("in", "2026-10-10T12:16:00.000Z").put("closedBreak", 0);
+            ShellStore.put(c, AttendanceSurfaces.KEY, s.toString()); AttendanceSurfaces.renderWidget(c);
+            seen = textOf(view[0], "Since yesterday 17:46");
+            assertEquals("Since yesterday 17:46", seen[0]);
+            assertEquals("Still checked in", seen[1]);
+            assertEquals("Fix time", seen[2]);
+            picture(view[0], 250, 110, "polish1-widget-small-forgotten.png");
+        } finally { host[0].stopListening(); host[0].deleteAppWidgetId(id[0]); }
+    }
+    /** Evidence: the widget drawn at a launcher size (dp), saved beside R21's picture for the acceptance to pull. */
+    void picture(AppWidgetHostView host, int widthDp, int heightDp, String name) {
+        InstrumentationRegistry.getInstrumentation().runOnMainSync(() -> {
+            int width = Math.round(widthDp * c.getResources().getDisplayMetrics().density), height = Math.round(heightDp * c.getResources().getDisplayMetrics().density);
+            host.measure(View.MeasureSpec.makeMeasureSpec(width, View.MeasureSpec.EXACTLY), View.MeasureSpec.makeMeasureSpec(height, View.MeasureSpec.EXACTLY));
+            host.layout(0, 0, width, height);
+            android.graphics.Bitmap bitmap = android.graphics.Bitmap.createBitmap(width, height, android.graphics.Bitmap.Config.ARGB_8888);
+            host.draw(new android.graphics.Canvas(bitmap));
+            try (java.io.FileOutputStream out = new java.io.FileOutputStream(new java.io.File(c.getExternalFilesDir(null), name))) { bitmap.compress(android.graphics.Bitmap.CompressFormat.PNG, 100, out); }
+            catch (java.io.IOException e) { throw new AssertionError(e); }
+        });
+    }
+    /** The widget's texts once its status reads `expected` (the host applies RemoteViews asynchronously). */
+    String[] textOf(AppWidgetHostView host, String expected) {
+        String[] out = new String[3];
+        for (int attempt = 0; attempt < 150; attempt++) {
+            // The emulator under load can take seconds to apply an update: draw again once a second while waiting.
+            if (attempt > 0 && attempt % 10 == 0) AttendanceSurfaces.renderWidget(c);
+            InstrumentationRegistry.getInstrumentation().waitForIdleSync();
+            InstrumentationRegistry.getInstrumentation().runOnMainSync(() -> {
+                android.widget.TextView status = host.findViewById(R.id.attendance_status), worked = host.findViewById(R.id.attendance_worked);
+                android.widget.TextView button = host.findViewById(R.id.attendance_primary);
+                out[0] = status == null ? null : status.getText().toString(); out[1] = worked == null ? null : worked.getText().toString();
+                out[2] = button == null ? null : button.getText().toString();
+            });
+            if (expected.equals(out[0])) break;
+            SystemClock.sleep(100);
+        }
+        return out;
+    }
 }

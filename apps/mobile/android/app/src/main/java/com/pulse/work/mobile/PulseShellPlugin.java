@@ -100,9 +100,22 @@ public class PulseShellPlugin extends Plugin {
         r.put("deviceId", ShellStore.enrolled(c) ? ShellStore.get(c, ShellStore.DEVICE) : null);
         r.put("personId", ShellStore.enrolled(c) ? ShellStore.get(c, ShellStore.PERSON) : null);
         r.put("notifications", Notifier.enabled(c));
+        r.put("notificationsAsk", notificationsAsk(c));
         r.put("pushReady", firebaseReady());
         r.put("pushActive", pushActive(c));
         call.resolve(r);
+    }
+
+    /**
+     * POLISH-1: what asking would do while notifications are off. "prompt": Android 13+ can still show its question
+     * (never asked, or asked once); "denied": only the app's notification settings can turn them on (refused twice,
+     * switched off there, or Android 12 and older).
+     */
+    private String notificationsAsk(Context c) {
+        if (Notifier.enabled(c)) return "granted";
+        if (Build.VERSION.SDK_INT < 33) return "denied";
+        PermissionState state = getPermissionState("notifications");
+        return state == PermissionState.PROMPT || state == PermissionState.PROMPT_WITH_RATIONALE ? "prompt" : "denied";
     }
 
     private boolean firebaseReady() {
