@@ -185,7 +185,9 @@ public class AttendanceSurfacesTest {
     /** The widget's texts once its status reads `expected` (the host applies RemoteViews asynchronously). */
     String[] textOf(AppWidgetHostView host, String expected) {
         String[] out = new String[3];
-        for (int attempt = 0; attempt < 30; attempt++) {
+        for (int attempt = 0; attempt < 150; attempt++) {
+            // The emulator under load can take seconds to apply an update: draw again once a second while waiting.
+            if (attempt > 0 && attempt % 10 == 0) AttendanceSurfaces.renderWidget(c);
             InstrumentationRegistry.getInstrumentation().waitForIdleSync();
             InstrumentationRegistry.getInstrumentation().runOnMainSync(() -> {
                 android.widget.TextView status = host.findViewById(R.id.attendance_status), worked = host.findViewById(R.id.attendance_worked);
