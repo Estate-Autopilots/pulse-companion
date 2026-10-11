@@ -151,6 +151,8 @@ ready
 # the bars' frames and the WebView's bounds are recorded for each (edges.txt). The WebView must reach the top of the
 # screen (under the status bar) unless Capacitor pads the window itself for an old WebView; then the page gets no inset.
 : > "$OUT/edges.txt"
+# The emulator's own navigation mode, put back afterwards (changing it restarts the app's activity).
+nav_before=$(adb shell cmd overlay list 2>/dev/null | grep -oE '\[x\] com\.android\.internal\.systemui\.navbar\.[a-z]+' | head -1 | awk '{print $2}' | tr -d '\r' || true)
 for nav in gestural threebutton; do
   adb shell cmd overlay enable-exclusive --category "com.android.internal.systemui.navbar.$nav" >/dev/null 2>&1 || true
   sleep 3
@@ -170,9 +172,13 @@ for nav in gestural threebutton; do
     done
   done
 done
-adb shell cmd overlay enable-exclusive --category com.android.internal.systemui.navbar.gestural >/dev/null 2>&1 || true
+[ -n "$nav_before" ] && adb shell cmd overlay enable-exclusive --category "$nav_before" >/dev/null 2>&1 || true
 adb shell wm size 1080x2340
 adb shell cmd uimode night no || true
+# A fresh start on the sign-in page, as after phase 2 (the overlay change above recreated the activity).
+sleep 3; adb shell am force-stop $PKG; sleep 2
+adb shell am start -W -n "$ACT" >/dev/null
+wait_text "$SIGNIN" 120
 python3 - "$OUT/edges.txt" <<'PY'
 import re, sys
 for line in open(sys.argv[1]):
