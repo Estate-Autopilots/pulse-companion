@@ -1,7 +1,7 @@
 // Types for @pulse/companion (the implementation is plain ESM so desktop and Chrome can load it without a build).
 
 export type CompanionState = 'out' | 'in' | 'break' | 'done' | 'leave' | 'holiday' | 'off';
-export type Mood = 'idle' | 'waking' | 'in' | 'break' | 'done' | 'celebrate' | 'sleepy';
+export type Mood = 'idle' | 'listening' | 'thinking' | 'new-message' | 'happy' | 'concerned' | 'sleeping' | 'waking' | 'in' | 'break' | 'done' | 'celebrate' | 'sleepy';
 export type ActionId = 'check-in' | 'break-start' | 'break-end' | 'check-out';
 export type Mode = 'office' | 'wfh' | 'field';
 
@@ -108,8 +108,8 @@ export const PIP_MOODS: Mood[];
 export const PIP_LABELS: Record<Mood, string>;
 export const PIP_BULB: Record<Mood, string>;
 export const PIP_COLORS: Record<'light' | 'dark', Record<string, string>>;
-export const PIP_PATHS: { stalk: string; eyesHappy: string[]; eyesClosed: string[]; star: string; smile: string; flat: string; cup: string; cupHandle: string; steam: string[]; z: string; confetti: [number, number, string][] };
-export function pipFace(mood: Mood): { eyes: 'open' | 'happy' | 'closed' | 'star'; mouth: 'smile' | 'o' | 'flat'; cheeks: boolean; cup: boolean; zzz: boolean; confetti: boolean; wave: boolean; bulb: string };
+export const PIP_PATHS: { body: string; shine: string; eyesHappy: string[]; eyesClosed: string[]; brows: string[]; star: string; smile: string; grin: string; flat: string; wobble: string; cup: string; cupHandle: string; steam: string[]; z: string; confetti: [number, number, string][] };
+export function pipFace(mood: Mood): { eyes: 'open' | 'happy' | 'closed' | 'star'; mouth: 'smile' | 'grin' | 'o' | 'flat' | 'wobble' | 'none'; cheeks: boolean; brows: boolean; cup: boolean; zzz: boolean; confetti: boolean; wave: boolean; dots: boolean; rings: boolean; bulb: string };
 export function pipSvg(options?: { mood?: Mood; size?: number; label?: string; still?: boolean; uid?: string }): string;
 export function pipStaticSvg(options?: { mood?: Mood; theme?: 'light' | 'dark'; size?: number; blink?: boolean }): string;
 

@@ -4,6 +4,10 @@
   "private": true,
   "type": "module",
   "exports": {
-    "./tokens.css": "./src/tokens.css"
+    "./tokens.css": "./src/tokens.css",
+    "./brand": {
+      "types": "./src/brand.d.ts",
+      "default": "./src/brand.js"
+    }
   }
 }
