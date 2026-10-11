@@ -185,6 +185,25 @@ public class QaSessionTest {
                 break;
             }
             case "wifi": { JSONObject w = OfficeArrival.wifi(c); done.put("wifi", w == null ? JSONObject.NULL : w); break; }
+            case "wifi-raw": {
+                // What Android lets this app read right now (the emulator's own network; synthetic names only).
+                @SuppressWarnings("deprecation") android.net.wifi.WifiInfo info = ((android.net.wifi.WifiManager) c.getApplicationContext().getSystemService(Context.WIFI_SERVICE)).getConnectionInfo();
+                done.put("ssid", info == null ? JSONObject.NULL : info.getSSID()).put("located", OfficeArrival.located(c)).put("background", OfficeArrival.background(c))
+                    .put("offices", ShellStore.get(c, "arrival-offices") == null ? JSONObject.NULL : ShellStore.get(c, "arrival-offices"));
+                break;
+            }
+            case "netwatch": {
+                // The test's own Wi-Fi callback beside the shell's: when Android says Wi-Fi is up, what would the shell send?
+                android.net.ConnectivityManager cm = c.getSystemService(android.net.ConnectivityManager.class);
+                android.net.ConnectivityManager.NetworkCallback cb = new android.net.ConnectivityManager.NetworkCallback() {
+                    @Override public void onAvailable(android.net.Network n) {
+                        try { JSONObject w = OfficeArrival.wifi(c); log("netwatch", "change", "available", "wifi", w == null ? JSONObject.NULL : w); } catch (Exception e) { log("netwatch", "change", "available", "error", String.valueOf(e)); }
+                    }
+                    @Override public void onLost(android.net.Network n) { log("netwatch", "change", "lost"); }
+                };
+                cm.registerNetworkCallback(new android.net.NetworkRequest.Builder().addTransportType(android.net.NetworkCapabilities.TRANSPORT_WIFI).build(), cb);
+                break;
+            }
             case "updates": updates = new JSONArray(i.getStringExtra("rows")); updatesOnce = i.getBooleanExtra("once", true); break;
             case "inbox": done.put("total", InboxWorker.check(c, i.getBooleanExtra("notify", true))).put("notifications", notifications()); break;
             case "inbox-work": InboxWorker.runNow(c); break;
@@ -194,6 +213,17 @@ public class QaSessionTest {
                 String tag = i.getStringExtra("tag");
                 for (StatusBarNotification n : c.getSystemService(NotificationManager.class).getActiveNotifications())
                     if (tag != null && tag.equals(n.getTag())) { n.getNotification().contentIntent.send(); done.put("sent", true); }
+                break;
+            }
+            case "notification-action": {
+                // Press a notification's own button (as from the shade), e.g. the arrival question's "Check in".
+                String title = i.getStringExtra("title");
+                for (StatusBarNotification n : c.getSystemService(NotificationManager.class).getActiveNotifications()) {
+                    CharSequence t = n.getNotification().extras.getCharSequence(Notification.EXTRA_TITLE);
+                    if (title != null && t != null && t.toString().contains(title) && n.getNotification().actions != null && n.getNotification().actions.length > 0) {
+                        n.getNotification().actions[0].actionIntent.send(); done.put("pressed", String.valueOf(n.getNotification().actions[0].title));
+                    }
+                }
                 break;
             }
             case "url": done.put("url", webUrl()).put("activity", resumed() == null ? JSONObject.NULL : resumed().getClass().getSimpleName()); break;
