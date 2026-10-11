@@ -152,8 +152,9 @@ public class AttendanceSurfacesTest {
             });
         } finally { host[0].stopListening(); host[0].deleteAppWidgetId(id[0]); }
     }
-    /** POLISH-1: the small widget shows time worked as of the last read, and offers no check-out for yesterday's session. */
-    @Test public void zSmallWidgetShowsTimeWorkedAndNeverChecksOutAForgottenSession() throws Exception {
+    /** POLISH-1: the small widget shows time worked as of the last read, and offers no check-out for yesterday's session.
+     *  Runs before zReal…, whose last tap opens Pulse (its background check then forgets the synthetic credential). */
+    @Test public void ySmallWidgetShowsTimeWorkedAndNeverChecksOutAForgottenSession() throws Exception {
         AppWidgetManager manager = AppWidgetManager.getInstance(c);
         AppWidgetProviderInfo provider = manager.getInstalledProviders().stream().filter(p -> p.provider.equals(new ComponentName(c, AttendanceWidgetSmall.class))).findFirst().orElse(null);
         assertNotNull(provider);
