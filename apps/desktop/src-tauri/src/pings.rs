@@ -22,7 +22,7 @@ fn issue(app:&AppHandle,message:Option<String>){*app.state::<Pings>().issue.lock
 
 /// What the person sees on a ping: the kind of update, never message text (lock screens show it).
 pub fn ping_text(kind:&str)->&'static str{
- match kind{"chat"=>"New message in a conversation","mention"=>"You were mentioned","reply"=>"New reply in a thread","approval"=>"A request needs your decision","decision"=>"Your request was decided","policy"=>"A policy was updated","holiday"=>"Holiday update","payroll"=>"Salary credited","task"=>"New task for you",_=>"A new work update is ready"}
+ match kind{"chat"=>"New message in a conversation","mention"=>"You were mentioned","reply"=>"New reply in a thread","approval"=>"A request needs your decision","decision"=>"Your request was decided","policy"=>"A policy was updated","holiday"=>"Holiday update","payroll"=>"Salary credited","task"=>"New task for you","attendance"=>"Check in, break or check out: one tap","profile"=>"Finish your Pulse profile",_=>"A new work update is ready"}
 }
 
 #[tauri::command]
@@ -117,6 +117,8 @@ fn clicked(app:AppHandle,device:String,row:Value){
    Ok(data)=>{
     if channel.is_none(){
      if !data["rows"].as_array().is_some_and(|rows|rows.iter().any(|n|n["id"]==row["id"])){return;}
+     // Attendance questions ("Check in?", reminders) open the quick panel, where the answer is one click.
+     if row["kind"].as_str()==Some("attendance"){show_panel(&app);let _=app.state::<Companion>().request("companion/read",Some(json!({"id":row["id"]})));return;}
      // Requests, policies and other pages open where they live, in the Pulse window.
      if let Some(href)=row["href"].as_str().and_then(crate::appwin::safe_path){crate::appwin::open(&app,Some(href));let _=app.state::<Companion>().request("companion/read",Some(json!({"id":row["id"]})));return;}
     }
@@ -235,7 +237,7 @@ mod tests{
  use super::*;
  #[test]
  fn ping_text_never_contains_message_content(){
-  for kind in ["chat","mention","reply","approval","decision","policy","holiday","payroll","task","update","unknown"]{assert!(ping_text(kind).len()<60);}
+  for kind in ["chat","mention","reply","approval","decision","policy","holiday","payroll","task","attendance","profile","update","unknown"]{assert!(ping_text(kind).len()<60);}
   assert_eq!(ping_text("chat"),"New message in a conversation");
  }
 }

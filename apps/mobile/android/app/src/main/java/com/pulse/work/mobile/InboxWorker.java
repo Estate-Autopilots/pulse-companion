@@ -40,12 +40,29 @@ public class InboxWorker extends Worker {
         if (!ShellStore.enrolled(context)) return Result.success();
         try {
             check(context, !MainActivity.foreground && !PulseShellPlugin.pushActive(context));
+            refreshWidgets(context);
             return Result.success();
         } catch (Gateway.Revoked e) {
             return Result.success();
+        } catch (Gateway.Failed e) {
+            if (e.status == 401) { Gateway.forget(context); return Result.success(); }
+            return getRunAttemptCount() < 3 ? Result.retry() : Result.success();
         } catch (IOException | JSONException e) {
             return getRunAttemptCount() < 3 ? Result.retry() : Result.success();
         }
+    }
+
+    /**
+     * POLISH-1: a Pulse widget on the home screen is refreshed with the same ~15-minute check (and whenever the app
+     * changes attendance). Only when one exists; a failure leaves the last confirmed status, marked as such.
+     */
+    static void refreshWidgets(Context context) {
+        android.appwidget.AppWidgetManager manager = android.appwidget.AppWidgetManager.getInstance(context);
+        int widgets = manager.getAppWidgetIds(new android.content.ComponentName(context, AttendanceWidget.class)).length
+            + manager.getAppWidgetIds(new android.content.ComponentName(context, AttendanceWidgetSmall.class)).length;
+        if (widgets == 0) return;
+        try { AttendanceSurfaces.current(context, ShellStore.get(context, ShellStore.PERSON)); }
+        catch (Exception ignored) { AttendanceSurfaces.renderWidget(context); }
     }
 
     /** Read new outbox items once; notify when asked to; acknowledge what this phone received. */
@@ -68,7 +85,7 @@ public class InboxWorker extends Worker {
             if (rows != null) for (int i = 0; i < rows.length(); i++) {
                 JSONObject row = rows.getJSONObject(i);
                 if (!row.optBoolean("pingAllowed")) continue;
-                if (notify) Notifier.post(context, row.optString("id"), row.optString("title"), row.optString("detail", ""), row.optString("href", "/inbox"));
+                if (notify) Notifier.post(context, row.optString("id"), row.optString("title"), row.optString("detail", ""), row.optString("href", "/notifications"), row.optString("eventType", null));
                 received.put(row.optString("id"));
             }
             if (received.length() > 0) Gateway.post("companion/ack", Gateway.json("ids", received), token);

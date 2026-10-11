@@ -9,9 +9,14 @@
     <uses-permission android:name="android.permission.ACCESS_WIFI_STATE" />
     <uses-permission android:name="android.permission.ACCESS_COARSE_LOCATION" />
     <uses-permission android:name="android.permission.ACCESS_FINE_LOCATION" />
+    <!-- PRESENCE-ONBOARD: office arrival. Android watches geofences around the person's offices and wakes Pulse only on
+         arrival (after the dwell) or departure; "Allow all the time" is asked separately, on a tap, after consent.
+         Pulse sends "entered/left office X" or the office Wi-Fi name, never a position. -->
+    <uses-permission android:name="android.permission.ACCESS_BACKGROUND_LOCATION" />
     <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
     <uses-permission android:name="android.permission.REQUEST_INSTALL_PACKAGES" />
     <uses-permission android:name="android.permission.VIBRATE" />
+    <uses-permission android:name="android.permission.RECEIVE_BOOT_COMPLETED" />
     <!-- No camera permission: a photo for an upload is taken by the camera app itself. -->
 
     <application
@@ -48,6 +53,32 @@
                 <data android:scheme="https" android:host="pulse.estateautopilots.com" />
             </intent-filter>
         </activity>
+
+        <receiver android:name=".AttendanceWidget" android:exported="false" android:label="Pulse · today">
+            <intent-filter>
+                <action android:name="android.appwidget.action.APPWIDGET_UPDATE" />
+                <action android:name="android.intent.action.BOOT_COMPLETED" />
+            </intent-filter>
+            <meta-data android:name="android.appwidget.provider" android:resource="@xml/attendance_widget" />
+        </receiver>
+
+        <!-- POLISH-1: the small widget (2×1); the medium one above (3×2). Both draw for the size the launcher gives. -->
+        <receiver android:name=".AttendanceWidgetSmall" android:exported="false" android:label="Pulse · check-in">
+            <intent-filter>
+                <action android:name="android.appwidget.action.APPWIDGET_UPDATE" />
+            </intent-filter>
+            <meta-data android:name="android.appwidget.provider" android:resource="@xml/attendance_widget_small" />
+        </receiver>
+
+        <!-- Office arrival: geofence transitions, Wi-Fi networks and reboots (geofences are cleared on boot). -->
+        <receiver android:name=".OfficeArrival$Receiver" android:exported="false">
+            <intent-filter>
+                <action android:name="android.intent.action.BOOT_COMPLETED" />
+                <action android:name="android.intent.action.MY_PACKAGE_REPLACED" />
+            </intent-filter>
+        </receiver>
+        <!-- One-tap answers on attendance notifications ("Check in?"): explicit, sealed intents only. -->
+        <receiver android:name=".AttendanceAction" android:exported="false" />
 
         <!-- Uploads from the camera, downloads to open or share, and verified Pulse updates. -->
         <provider

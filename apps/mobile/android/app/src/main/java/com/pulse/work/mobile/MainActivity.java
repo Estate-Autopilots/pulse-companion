@@ -10,6 +10,7 @@ import android.os.Bundle;
 import android.webkit.CookieManager;
 import android.webkit.WebSettings;
 import android.webkit.WebView;
+import androidx.activity.EdgeToEdge;
 import androidx.activity.OnBackPressedCallback;
 import androidx.activity.result.ActivityResult;
 import androidx.activity.result.ActivityResultCallback;
@@ -39,6 +40,7 @@ public class MainActivity extends BridgeActivity {
     @Override
     protected void onCreate(Bundle savedInstanceState) {
         registerPlugin(PulseShellPlugin.class);
+        registerPlugin(AttendancePlugin.class);
         // Registered before the activity starts; ShellChromeClient uses it for "Camera, Photos or Files".
         chooser = registerForActivityResult(new ActivityResultContracts.StartActivityForResult(), result -> {
             ActivityResultCallback<ActivityResult> done = chooserResult;
@@ -47,6 +49,12 @@ public class MainActivity extends BridgeActivity {
         });
         super.onCreate(savedInstanceState);
         if (getBridge() == null) return;
+        // POLISH-1: Pulse draws edge to edge on every Android version, as Android 15 already requires. Before, Android 14
+        // and older padded the window under the status bar and the page added the inset again (an empty band above the
+        // header on the owner's Android 13 phone). Now the page's own header sits under a transparent status bar, so its
+        // colour runs to the top; the page pads by env(safe-area-inset-*) exactly once. After BridgeActivity has set its
+        // theme and content, so the launch theme is never kept.
+        EdgeToEdge.enable(this);
         WebView web = getBridge().getWebView();
         WebSettings settings = web.getSettings();
         // Large system text is honoured a little, never enough to break Pulse's layouts.
@@ -66,7 +74,7 @@ public class MainActivity extends BridgeActivity {
             }
         });
         Notifier.channels(this);
-        if (ShellStore.enrolled(this)) InboxWorker.schedule(this);
+        if (ShellStore.enrolled(this)) { InboxWorker.schedule(this); OfficeArrival.sync(this); }
         // Capacitor records the first intent but does not navigate to it. App Links and notification taps must
         // also open their target when Android creates the activity, not just when it reuses a running one.
         open(getIntent());
@@ -102,6 +110,7 @@ public class MainActivity extends BridgeActivity {
     /** A Pulse link (App Link) or a tapped notification opens its page inside the app. */
     private void open(Intent intent) {
         if (intent == null || getBridge() == null) return;
+        AttendanceSurfaces.accept(this, intent);
         // The same notification permission flow as Settings → Notifications → Turn on (used by the emulator acceptance).
         if ("notifications".equals(intent.getStringExtra(EXTRA_ASK))) {
             intent.removeExtra(EXTRA_ASK);

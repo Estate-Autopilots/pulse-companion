@@ -475,8 +475,42 @@ fn app_menu(app: &AppHandle) -> tauri::Result<Menu<tauri::Wry>> {
     Menu::with_items(app, &[&pulse, &edit, &view, &go, &window, &help])
 }
 
+/// The tray's menu. PRESENCE-ONBOARD: the day's status line and its one-click actions (Check in, Break, Back,
+/// Check out) come first; a click is handed to the panel, which runs it through the same saved queue as its buttons.
+fn tray_menu(app: &AppHandle, status: Option<&str>, actions: &[TrayAction]) -> tauri::Result<Menu<tauri::Wry>> {
+    let menu = Menu::new(app)?;
+    if let Some(status) = status.filter(|s| !s.is_empty()) {
+        menu.append(&MenuItem::with_id(app, "att:status", status.chars().take(60).collect::<String>(), false, None::<&str>)?)?;
+    }
+    for action in actions.iter().filter(|a| ATTENDANCE_ACTIONS.contains(&a.id.as_str())).take(4) {
+        menu.append(&MenuItem::with_id(app, format!("att:{}", action.id), action.label.chars().take(30).collect::<String>(), true, None::<&str>)?)?;
+    }
+    if status.is_some() || !actions.is_empty() { menu.append(&PredefinedMenuItem::separator(app)?)?; }
+    menu.append(&MenuItem::with_id(app, "main", "Open Pulse", true, None::<&str>)?)?;
+    menu.append(&MenuItem::with_id(app, "panel", "Quick panel", true, Some("CmdOrCtrl+Alt+P"))?)?;
+    menu.append(&MenuItem::with_id(app, "web", "Open Pulse in the browser", true, None::<&str>)?)?;
+    menu.append(&PredefinedMenuItem::separator(app)?)?;
+    menu.append(&MenuItem::with_id(app, "settings", "Settings…", true, None::<&str>)?)?;
+    menu.append(&MenuItem::with_id(app, "feedback", "Send feedback…", true, None::<&str>)?)?;
+    menu.append(&PredefinedMenuItem::separator(app)?)?;
+    menu.append(&MenuItem::with_id(app, "quit", "Quit Pulse", true, None::<&str>)?)?;
+    Ok(menu)
+}
+const ATTENDANCE_ACTIONS: [&str; 4] = ["check-in", "break-start", "break-end", "check-out"];
+#[derive(serde::Deserialize)]
+struct TrayAction { id: String, label: String }
+
+/// The panel keeps the tray menu in step with the day (status and the actions that make sense now).
+#[tauri::command]
+fn set_tray_actions(app: AppHandle, status: String, actions: Vec<TrayAction>) {
+    let Some(tray) = app.tray_by_id("pulse") else { return };
+    if let Ok(menu) = tray_menu(&app, Some(&status), &actions) { let _ = tray.set_menu(Some(menu)); }
+}
+
 fn menu_action(app: &AppHandle, id: &str) {
     match id {
+        "att:status" => show_panel(app),
+        att if att.starts_with("att:") && ATTENDANCE_ACTIONS.contains(&&att[4..]) => { let _ = app.emit_to(PANEL, "pulse:tray-action", json!({ "action": &att[4..] })); }
         "panel" => show_panel(app),
         "main" => appwin::open(app, None),
         "web" => { let _ = open_url(&format!("{}/me", companion::site(&app.state::<Companion>().base()))); }
@@ -555,13 +589,7 @@ pub fn run() {
                 if let WindowEvent::CloseRequested { api, .. } = event { api.prevent_close(); hide_panel(&handle); }
             });
 
-            let open = MenuItem::with_id(app, "main", "Open Pulse", true, None::<&str>)?;
-            let quick = MenuItem::with_id(app, "panel", "Quick panel", true, Some("CmdOrCtrl+Alt+P"))?;
-            let web = MenuItem::with_id(app, "web", "Open Pulse in the browser", true, None::<&str>)?;
-            let settings = MenuItem::with_id(app, "settings", "Settings…", true, None::<&str>)?;
-            let feedback = MenuItem::with_id(app, "feedback", "Send feedback…", true, None::<&str>)?;
-            let quit = MenuItem::with_id(app, "quit", "Quit Pulse", true, None::<&str>)?;
-            let menu = Menu::with_items(app, &[&open, &quick, &web, &PredefinedMenuItem::separator(app)?, &settings, &feedback, &PredefinedMenuItem::separator(app)?, &quit])?;
+            let menu = tray_menu(app.handle(), None, &[])?;
             #[cfg(target_os = "macos")]
             let icon = Image::from_bytes(ICON_TEMPLATE)?;
             #[cfg(not(target_os = "macos"))]
@@ -624,6 +652,7 @@ pub fn run() {
             panel_hide,
             panel_pin,
             set_tray,
+            set_tray_actions,
             notify,
             autostart_get,
             autostart_set,

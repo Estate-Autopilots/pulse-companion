@@ -1,7 +1,7 @@
 // Static checks of the Pulse phone app shell. Gradle and Xcode run only on hosted runners; these run everywhere.
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { existsSync, readFileSync } from 'node:fs';
+import { existsSync, readFileSync, readdirSync } from 'node:fs';
 import { createHash } from 'node:crypto';
 import { dirname, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -44,15 +44,26 @@ test('installs over the Expo app: same package, durable key, higher versionCode'
   assert.match(gradle, new RegExp(`def pulseVersion = '${pkg.version.replaceAll('.', '\\.')}'`));
   const [a, b, c] = pkg.version.split('.').map(Number);
   assert.ok(a * 1000000 + b * 1000 + c > PUBLISHED_EXPO_VERSION_CODE);
-  assert.equal(pkg.version, '1.1.0');
+  assert.equal(pkg.version, '1.1.2');
   assert.match(gradle, /storeType "PKCS12"[\s\S]*keyAlias "pulse"/, 'the Expo build used this key store and alias');
   const pbx = read('ios/App/App.xcodeproj/project.pbxproj');
   assert.equal((pbx.match(new RegExp(`MARKETING_VERSION = ${pkg.version.replaceAll('.', '\\.')};`, 'g')) ?? []).length, 2);
-  assert.equal((pbx.match(/CURRENT_PROJECT_VERSION = 1001000;/g) ?? []).length, 2);
+  assert.equal((pbx.match(/CURRENT_PROJECT_VERSION = 1001002;/g) ?? []).length, 2);
 });
 
 test('the Android manifest asks for no tracking and keeps credentials on the phone', () => {
-  assert.doesNotMatch(manifest, /ACCESS_BACKGROUND_LOCATION|RECORD_AUDIO|READ_CONTACTS|FOREGROUND_SERVICE/);
+  assert.doesNotMatch(manifest, /RECORD_AUDIO|READ_CONTACTS|FOREGROUND_SERVICE/);
+  // PRESENCE-ONBOARD (owner, 10 Oct 2026): office arrival by geofence. Background location exists only for Android's
+  // own geofences around the person's offices, after their consent and a separate "Allow all the time"; there is no
+  // foreground service and no continuous location request anywhere in the shell (a position is read once, on a tap).
+  assert.match(manifest, /ACCESS_BACKGROUND_LOCATION/);
+  assert.match(manifest, /OfficeArrival\$Receiver" android:exported="false"/);
+  for (const f of readdirSync(resolve(app, 'android/app/src/main/java/com/pulse/work/mobile')).filter((f) => f.endsWith('.java'))) {
+    const src = read(`android/app/src/main/java/com/pulse/work/mobile/${f}`);
+    assert.doesNotMatch(src, /requestLocationUpdates|LocationRequest\.Builder|FusedLocationProviderClient/, `${f} never asks for continuous location`);
+    if (f !== 'PulseShellPlugin.java') assert.doesNotMatch(src, /getCurrentLocation|requestSingleUpdate/, `${f} reads no position (only the tap in PulseShellPlugin does)`);
+  }
+  assert.doesNotMatch(read('android/app/src/main/java/com/pulse/work/mobile/OfficeArrival.java'), /getLatitude|getLongitude|"lat"\s*,|put\("lng"/, 'arrival sends an office and a signal kind, never a position');
   assert.doesNotMatch(manifest, /android\.permission\.CAMERA/, 'photos come from the camera app; no camera permission');
   assert.match(manifest, /android:allowBackup="false"/);
   assert.match(manifest, /android:dataExtractionRules="@xml\/data_extraction_rules"/);
@@ -75,7 +86,10 @@ test('all production Pulse routes open in the app, including future web routes',
 
 test('the bridge has the same methods on Android, iPhone and in the web app', () => {
   const androidMethods = [...java.matchAll(/@PluginMethod[^\n]*\n(?:\s*@[^\n]+\n)*\s*public void (\w+)\(PluginCall/g)].map(m => m[1]).sort();
-  const iosMethods = [...swift.matchAll(/CAPPluginMethod\(name: "(\w+)"/g)].map(m => m[1]).sort();
+  // Capacitor's own checkPermissions/requestPermissions are inherited on Android; iOS must list them (POLISH-1).
+  const builtIn = ['checkPermissions', 'requestPermissions'];
+  const iosMethods = [...swift.matchAll(/CAPPluginMethod\(name: "(\w+)"/g)].map(m => m[1]).filter(m => !builtIn.includes(m)).sort();
+  for (const m of builtIn) assert.match(swift, new RegExp(`CAPPluginMethod\\(name: "${m}"[\\s\\S]*override public func ${m}\\(_ call: CAPPluginCall\\)`), `iOS dispatches and answers ${m}`);
   assert.deepEqual(iosMethods, androidMethods);
   const web = resolve(repo, 'apps/web/app/lib/native-shell.ts');
   if (existsSync(web)) {

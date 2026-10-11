@@ -146,3 +146,14 @@ test('loading view before the first answer', () => {
   assert.equal(v.state, 'loading');
   assert.deepEqual(v.actions, []);
 });
+
+test('PRESENCE-ONBOARD: an office arrival is the same one-tap question on every surface; Break and Back everywhere', () => {
+  const p = { ...demoPayload('out', IST('09:58')), arrival: { at: '2026-10-08T04:27:00Z', office: 'Synthetic Studio' } };
+  const v = deriveView(p, IST('09:58'));
+  assert.equal(v.title, 'You’re at Synthetic Studio');
+  assert.match(v.subtitle, /One tap checks you in/);
+  assert.equal(v.mood, 'waking');
+  assert.deepEqual(v.actions.map((a) => [a.id, a.label, a.primary]), [['check-in', 'Check in', true]]);
+  assert.deepEqual(deriveView(demoPayload('in', IST('11:00')), IST('11:00')).actions.map((a) => a.label), ['Break', 'Check out']);
+  assert.deepEqual(deriveView(demoPayload('break', IST('13:10')), IST('13:10')).actions.map((a) => a.label), ['Back', 'Check out']);
+});

@@ -6,7 +6,7 @@ name: Pulse phone app
 on:
   push:
     # The isolated validation branch builds, signs and runs the full acceptance, but only main publishes.
-    branches: [main, validation/mobile-shell]
+    branches: [main, validation/mobile-shell, validation/r21-android-surfaces]
     paths: ['apps/mobile/**', 'packages/companion/src/updates.js', '.github/workflows/mobile.yml', 'pnpm-lock.yaml']
   workflow_dispatch:
     inputs:
@@ -74,7 +74,7 @@ jobs:
         env:
           PULSE_ANDROID_KEYSTORE: ${{ !inputs.validation_only && format('{0}/pulse-signing.p12', runner.temp) || '' }}
           PULSE_ANDROID_KEY_PASSWORD: ${{ secrets.ANDROID_SIGNING_PASSWORD }}
-        run: gradle assembleRelease --no-daemon --max-workers=2 -Dorg.gradle.parallel=false
+        run: gradle testReleaseUnitTest assembleRelease assembleReleaseAndroidTest --no-daemon --max-workers=2 -Dorg.gradle.parallel=false
       - name: Check package, version and signing certificate
         run: |
           apk=apps/mobile/android/app/build/outputs/apk/release/app-release.apk
@@ -88,6 +88,7 @@ jobs:
           "$tools/apksigner" verify --verbose --print-certs "$apk" | tee out/apk-signature.txt
           if [ "$VALIDATION_ONLY" != true ]; then grep -qi 'certificate SHA-256 digest: 7fb7e080fe49b5f285cbd436c500167575d5f1e6f862e7fbbebb3bec6d0989e6' out/apk-signature.txt; fi
           cp "$apk" "out/Pulse-$VERSION-android.apk"
+          cp apps/mobile/android/app/build/outputs/apk/androidTest/release/app-release-androidTest.apk "out/Pulse-$VERSION-android-tests.apk"
           rm -f "$RUNNER_TEMP/pulse-signing.p12"
       - uses: actions/upload-artifact@v7
         with:

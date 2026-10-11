@@ -44,7 +44,13 @@ final class Gateway {
         return "PulseShell/" + Shell.version() + " (android)";
     }
 
+    interface Transport { JSONObject call(String method, String url, JSONObject body, String bearer) throws IOException; }
+    // Package-private adapter for hosted instrumentation; no bridge/config setting can replace the production transport.
+    static Transport transport = Gateway::http;
     static JSONObject call(String method, String url, JSONObject body, String bearer) throws IOException {
+        return transport.call(method, url, body, bearer);
+    }
+    static JSONObject http(String method, String url, JSONObject body, String bearer) throws IOException {
         HttpURLConnection c = (HttpURLConnection) new URL(url).openConnection();
         try {
             c.setRequestMethod(method);
@@ -137,6 +143,7 @@ final class Gateway {
         accessUntil = 0;
         ShellStore.clear(context);
         InboxWorker.cancel(context);
+        AttendanceSurfaces.clear(context);
     }
 
     static JSONObject json(String key, Object value) {

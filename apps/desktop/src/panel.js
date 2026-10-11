@@ -219,6 +219,13 @@ function tray() {
   const b = state.session?.signedIn || state.demo ? badge(p, now()) : { text: '', tone: 'neutral', title: 'Pulse · sign in to check in' };
   const key = JSON.stringify(b);
   if (key !== state.lastTray) { state.lastTray = key; void invoke('set_tray', { text: b.text, tone: b.tone, title: b.title }).catch(() => {}); }
+  // The tray menu carries the same one-click actions as the panel (Check in, Break, Back, Check out).
+  // Rebuilt only when the state changes (not every minute), so an open menu is not pulled away.
+  const signed = (state.session?.signedIn || state.demo) && p, view = signed ? deriveView(p, now()) : null;
+  const actions = view && !state.busy && !state.queue.length ? view.actions.map(({ id, label }) => ({ id, label })) : [];
+  const status = view ? (state.queue.length ? 'Saved · will sync' : view.chip.text) : 'Sign in to check in';
+  const menu = JSON.stringify([status, actions]);
+  if (menu !== state.lastTrayMenu) { state.lastTrayMenu = menu; void invoke('set_tray_actions', { status, actions }).catch(() => {}); }
 }
 function remind() {
   if (!state.payload || state.demo || state.queue.length || recovery.error || !recovery.fresh) return;
@@ -313,6 +320,7 @@ async function boot() {
   setInterval(() => { tray(); remind(); }, 30000);
   setInterval(() => void refresh(), 120000);
   setInterval(() => { void updates.poll(updateContext()); updateUi(); }, 60000);
+  void listen('pulse:tray-action', ({ payload }) => { if (['check-in', 'break-start', 'break-end', 'check-out'].includes(payload?.action)) void act(payload.action); });
   void listen('pulse:open-conversation', ({ payload }) => {
     state.screen = state.session?.signedIn ? 'day' : 'connect'; if (payload.error && !state.session?.signedIn) state.connect = { phase: 'start', message: payload.error };
     render(); if (payload.channelId) communications.open(payload.channelId, payload.href); else if (payload.notificationId) communications.showInbox(); if (payload.error) communications.status(payload.error);

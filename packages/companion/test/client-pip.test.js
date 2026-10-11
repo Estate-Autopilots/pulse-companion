@@ -130,6 +130,17 @@ test('Pip: every mood renders small, labelled, static markup', () => {
   assert.equal(pipFace('nonsense').eyes, 'open');
 });
 
+test('Pip: the island states each have their own face', () => {
+  for (const mood of ['idle', 'listening', 'thinking', 'new-message', 'happy', 'concerned', 'sleeping']) assert.ok(PIP_MOODS.includes(mood), mood);
+  assert.match(pipSvg({ mood: 'thinking' }), /pip-dots/);
+  assert.match(pipSvg({ mood: 'listening' }), /pip-rings/);
+  assert.match(pipSvg({ mood: 'new-message' }), /pip-rings/);
+  assert.match(pipSvg({ mood: 'concerned' }), /pip-brows/);
+  assert.match(pipSvg({ mood: 'sleeping' }), /pip-zzz/);
+  assert.equal(pipFace('happy').eyes, 'happy');
+  assert.equal(pipFace('new-message').mouth, 'o');
+});
+
 test('demo client responds to clicks locally', async () => {
   const c = demoClient('out');
   assert.equal((await c.companion()).state, 'out');
