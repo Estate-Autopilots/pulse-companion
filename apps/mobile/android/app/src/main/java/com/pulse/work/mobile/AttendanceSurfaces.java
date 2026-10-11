@@ -176,16 +176,19 @@ final class AttendanceSurfaces {
         boolean open = "in".equals(state) || "break".equals(state);
         boolean forgotten = s != null && open && updatedAt > 0 && SurfacePolicy.forgotten(s.optString("entryDate"), s.optString("today"), s.optString("shiftStart"), s.optString("shiftEnd"), in, updatedAt);
         // Status: what Pulse last confirmed (R21), with the check-in time; a forgotten check-out says so plainly.
-        String status = s == null ? "Open Pulse to sign in" : forgotten
-            ? "Still checked in since " + dayName(s.optString("entryDate"), s.optString("today")) + " " + clock(in, offset)
+        // The small widget says the same in fewer words (its updated line is hidden, so the as-of time sits with the hours).
+        String since = s == null ? "" : dayName(s.optString("entryDate"), s.optString("today")) + " " + clock(in, offset);
+        String status = s == null ? (small ? "Open Pulse" : "Open Pulse to sign in")
+            : forgotten ? (small ? "Since " + since : "Still checked in since " + since)
+            : small ? SurfacePolicy.title(state) + (open && in > 0 ? " · " + clock(in, offset) : "")
             : "Last confirmed: " + SurfacePolicy.title(state) + (open && in > 0 ? " since " + clock(in, offset) : "");
         view.setTextViewText(R.id.attendance_status, status);
         // Time worked today, as of that confirmation (no timer runs on the home screen).
         String worked = "";
-        if (forgotten) worked = "Check out at the right time?";
+        if (forgotten) worked = small ? "Still checked in" : "Check out at the right time?";
         else if (s != null && in > 0 && (open || "done".equals(state)) && updatedAt > 0) {
             long seconds = SurfacePolicy.worked(in, instant(s.optString("out")), s.optLong("closedBreak"), instant(s.optString("breakStarted")), updatedAt);
-            worked = SurfacePolicy.words(seconds) + " worked" + (open ? " by " + clock(updatedAt, offset) : " today");
+            worked = SurfacePolicy.words(seconds) + (small ? "" : " worked") + (open ? " by " + clock(updatedAt, offset) : " today");
         }
         view.setTextViewText(R.id.attendance_worked, worked);
         view.setViewVisibility(R.id.attendance_worked, worked.isEmpty() ? View.GONE : View.VISIBLE);
@@ -198,8 +201,8 @@ final class AttendanceSurfaces {
         // One action, always confirmed in Pulse. A forgotten check-out opens Pulse to send the right time instead.
         String action = valid && !forgotten ? SurfacePolicy.primary(state, s.optBoolean("enabled")) : "open";
         String known = s == null || forgotten ? "open" : SurfacePolicy.primary(state, s.optBoolean("enabled"));
-        String label = forgotten ? "Fix the check-out" : "check-in".equals(action) ? "Check in" : "check-out".equals(action) ? "Check out"
-            : "check-in".equals(known) ? "Open to check in" : "check-out".equals(known) ? "Open to check out" : "Open Workspace";
+        String label = forgotten ? (small ? "Fix time" : "Fix the check-out") : "check-in".equals(action) ? "Check in" : "check-out".equals(action) ? "Check out"
+            : "check-in".equals(known) ? (small ? "Check in" : "Open to check in") : "check-out".equals(known) ? (small ? "Check out" : "Open to check out") : small ? "Open" : "Open Workspace";
         view.setTextViewText(R.id.attendance_primary, label);
         view.setOnClickPendingIntent(R.id.attendance_primary, tap(c, action));
         view.setOnClickPendingIntent(R.id.attendance_root, tap(c, "open"));
