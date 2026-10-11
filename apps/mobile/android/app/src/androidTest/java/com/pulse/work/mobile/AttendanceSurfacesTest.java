@@ -174,6 +174,7 @@ public class AttendanceSurfacesTest {
             assertEquals("Last confirmed: Checked in since 09:58", seen[0]);
             assertEquals("3 h 37 min worked by 14:05", seen[1]);
             assertEquals("Check out", seen[2]);
+            picture(view[0], 250, 110, "polish1-widget-small-in.png");
             // Yesterday's session, read at 04:25 today: plain words and the app instead of a check-out at 04:25.
             s.put("updated", "2026-10-10T22:55:00.000Z").put("entryDate", "2026-10-10").put("in", "2026-10-10T12:16:00.000Z").put("closedBreak", 0);
             ShellStore.put(c, AttendanceSurfaces.KEY, s.toString()); AttendanceSurfaces.renderWidget(c);
@@ -181,7 +182,20 @@ public class AttendanceSurfacesTest {
             assertEquals("Still checked in since yesterday 17:46", seen[0]);
             assertEquals("Check out at the right time?", seen[1]);
             assertEquals("Fix the check-out", seen[2]);
+            picture(view[0], 250, 110, "polish1-widget-small-forgotten.png");
         } finally { host[0].stopListening(); host[0].deleteAppWidgetId(id[0]); }
+    }
+    /** Evidence: the widget drawn at a launcher size (dp), saved beside R21's picture for the acceptance to pull. */
+    void picture(AppWidgetHostView host, int widthDp, int heightDp, String name) {
+        InstrumentationRegistry.getInstrumentation().runOnMainSync(() -> {
+            int width = Math.round(widthDp * c.getResources().getDisplayMetrics().density), height = Math.round(heightDp * c.getResources().getDisplayMetrics().density);
+            host.measure(View.MeasureSpec.makeMeasureSpec(width, View.MeasureSpec.EXACTLY), View.MeasureSpec.makeMeasureSpec(height, View.MeasureSpec.EXACTLY));
+            host.layout(0, 0, width, height);
+            android.graphics.Bitmap bitmap = android.graphics.Bitmap.createBitmap(width, height, android.graphics.Bitmap.Config.ARGB_8888);
+            host.draw(new android.graphics.Canvas(bitmap));
+            try (java.io.FileOutputStream out = new java.io.FileOutputStream(new java.io.File(c.getExternalFilesDir(null), name))) { bitmap.compress(android.graphics.Bitmap.CompressFormat.PNG, 100, out); }
+            catch (java.io.IOException e) { throw new AssertionError(e); }
+        });
     }
     /** The widget's texts once its status reads `expected` (the host applies RemoteViews asynchronously). */
     String[] textOf(AppWidgetHostView host, String expected) {

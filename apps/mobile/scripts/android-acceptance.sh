@@ -264,6 +264,7 @@ for permission in granted denied; do
   grep -q 'OK (7 tests)' "$OUT/r21-native-$permission.txt"
   if grep -qE 'FAILURES|INSTRUMENTATION_FAILED|Process crashed' "$OUT/r21-native-$permission.txt"; then exit 1; fi
   adb pull "/sdcard/Android/data/$PKG/files/r21-widget.png" "$OUT/r21-widget-$permission.png"
+  for state in in forgotten; do adb pull "/sdcard/Android/data/$PKG/files/polish1-widget-small-$state.png" "$OUT/polish1-widget-small-$state-$permission.png" || true; done
   pass "r21_native_surfaces_$permission" "7 synthetic native tests; no staff sign-in or attendance transport"
 done
 adb shell appwidget revokebind --package "$PKG" --user "$R21_WIDGET_USER"
