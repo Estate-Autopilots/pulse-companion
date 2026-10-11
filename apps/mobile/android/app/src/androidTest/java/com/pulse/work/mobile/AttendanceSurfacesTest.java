@@ -169,20 +169,21 @@ public class AttendanceSurfacesTest {
                 .put("shiftStart", "10:00").put("shiftEnd", "19:00").put("entryDate", "2026-10-11").put("in", "2026-10-11T04:28:00.000Z")
                 .put("out", "").put("closedBreak", 1800).put("breakStarted", "");
             ShellStore.put(c, AttendanceSurfaces.KEY, s.toString()); AttendanceSurfaces.renderWidget(c);
-            String[] seen = textOf(view[0]);
+            String[] seen = textOf(view[0], "Last confirmed: Checked in since 09:58");
             assertEquals("Last confirmed: Checked in since 09:58", seen[0]);
             assertEquals("3 h 37 min worked by 14:05", seen[1]);
             assertEquals("Check out", seen[2]);
             // Yesterday's session, read at 04:25 today: plain words and the app instead of a check-out at 04:25.
             s.put("updated", "2026-10-10T22:55:00.000Z").put("entryDate", "2026-10-10").put("in", "2026-10-10T12:16:00.000Z").put("closedBreak", 0);
             ShellStore.put(c, AttendanceSurfaces.KEY, s.toString()); AttendanceSurfaces.renderWidget(c);
-            seen = textOf(view[0]);
+            seen = textOf(view[0], "Still checked in since yesterday 17:46");
             assertEquals("Still checked in since yesterday 17:46", seen[0]);
             assertEquals("Check out at the right time?", seen[1]);
             assertEquals("Fix the check-out", seen[2]);
         } finally { host[0].stopListening(); host[0].deleteAppWidgetId(id[0]); }
     }
-    String[] textOf(AppWidgetHostView host) {
+    /** The widget's texts once its status reads `expected` (the host applies RemoteViews asynchronously). */
+    String[] textOf(AppWidgetHostView host, String expected) {
         String[] out = new String[3];
         for (int attempt = 0; attempt < 30; attempt++) {
             InstrumentationRegistry.getInstrumentation().waitForIdleSync();
@@ -192,7 +193,7 @@ public class AttendanceSurfacesTest {
                 out[0] = status == null ? null : status.getText().toString(); out[1] = worked == null ? null : worked.getText().toString();
                 out[2] = button == null ? null : button.getText().toString();
             });
-            if (out[0] != null && out[0].contains("since")) break;
+            if (expected.equals(out[0])) break;
             SystemClock.sleep(100);
         }
         return out;
