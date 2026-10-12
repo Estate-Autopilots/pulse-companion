@@ -3,7 +3,7 @@ apply plugin: 'com.android.application'
 // Pulse for Android: the production Pulse web app in a thin Capacitor shell. The application id and the durable
 // release key are the Expo app's (com.pulse.work.mobile), so this build installs over 0.3.5/1.0.0 on testers' phones.
 // versionCode follows the Pulse formula major*1000000 + minor*1000 + patch; the published Expo 1.0.0 APK is 1000000.
-def pulseVersion = '1.1.2'
+def pulseVersion = '1.1.3'
 def pulseCode = pulseVersion.tokenize('.').collect { it as int }.with { it[0] * 1000000 + it[1] * 1000 + it[2] }
 
 android {

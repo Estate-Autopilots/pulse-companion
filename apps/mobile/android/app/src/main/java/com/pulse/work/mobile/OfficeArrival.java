@@ -13,7 +13,15 @@ import android.net.NetworkRequest;
 import android.net.wifi.WifiInfo;
 import android.net.wifi.WifiManager;
 import android.os.Build;
+import androidx.annotation.NonNull;
 import androidx.core.content.ContextCompat;
+import androidx.work.Constraints;
+import androidx.work.ExistingPeriodicWorkPolicy;
+import androidx.work.NetworkType;
+import androidx.work.PeriodicWorkRequest;
+import androidx.work.WorkManager;
+import androidx.work.Worker;
+import androidx.work.WorkerParameters;
 import com.google.android.gms.location.Geofence;
 import com.google.android.gms.location.GeofencingClient;
 import com.google.android.gms.location.GeofencingEvent;
@@ -23,6 +31,7 @@ import java.util.ArrayList;
 import java.util.List;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
+import java.util.concurrent.TimeUnit;
 import org.json.JSONArray;
 import org.json.JSONObject;
 
@@ -33,8 +42,10 @@ import org.json.JSONObject;
  * - Geofences around the person's offices are watched by Android (Play services), which wakes Pulse only when the
  *   phone has stayed inside for HR's dwell time, or leaves. Pulse then sends "entered/left office X": never a
  *   position, never a journey. Android's own geofencing is battery-friendly (no polling by Pulse).
- * - Joining a Wi-Fi network wakes Pulse once; if it is an office network (by name), Pulse sends its name and access
- *   point. Android reveals these only with location permission.
+ * - Joining a Wi-Fi network wakes Pulse; if it is an office network (by name), Pulse sends its name and access
+ *   point. Android reveals these only with location permission. The network callback alone woke Pulse only when it
+ *   was registered (QA-E2E P1-14), so a background check that needs Wi-Fi runs too: Android holds it while the phone
+ *   is off Wi-Fi and runs it soon after the phone joins one (then about every 15 minutes while on Wi-Fi).
  *
  * The server decides what happens (it asks "Check in?" or, with HR's setting, the person's consent and two signals,
  * checks in). Check-out is never automatic. Withdrawing consent removes the geofences and the Wi-Fi callback.
@@ -45,6 +56,7 @@ final class OfficeArrival {
     private static final ExecutorService WORK = Executors.newSingleThreadExecutor();
     /** Log tag: what woke Pulse and whether a report went out (never a network name or a position). */
     private static final String TAG = "PulseArrival";
+    static final String WIFI_CHECK = "pulse-office-wifi";
     /** Android allows 100 geofences per app; a person has a handful of offices at most. */
     private static final int LIMIT = 20;
 
@@ -77,6 +89,7 @@ final class OfficeArrival {
                 ShellStore.put(c, "arrival-offices", presence.optJSONArray("offices") == null ? "[]" : presence.getJSONArray("offices").toString());
                 fences(c, presence.optJSONArray("offices"), presence.optInt("dwellMinutes", 3));
                 network(c);
+                wifiCheck(c);
             } catch (Exception e) {
                 // Offline or signed out: keep what is registered; the next app start or network change tries again.
                 android.util.Log.w(TAG, "sync skipped: " + e.getClass().getSimpleName());
@@ -113,7 +126,15 @@ final class OfficeArrival {
         cm.registerNetworkCallback(new NetworkRequest.Builder().addTransportType(NetworkCapabilities.TRANSPORT_WIFI).build(), pi);
     }
 
+    /** A periodic check that runs only on an unmetered network (Wi-Fi): the wake-up after joining one. */
+    private static void wifiCheck(Context c) {
+        Constraints wifi = new Constraints.Builder().setRequiredNetworkType(NetworkType.UNMETERED).build();
+        PeriodicWorkRequest every = new PeriodicWorkRequest.Builder(WifiCheck.class, 15, TimeUnit.MINUTES).setConstraints(wifi).build();
+        WorkManager.getInstance(c).enqueueUniquePeriodicWork(WIFI_CHECK, ExistingPeriodicWorkPolicy.KEEP, every);
+    }
+
     static void stop(Context c) {
+        try { WorkManager.getInstance(c).cancelUniqueWork(WIFI_CHECK); } catch (Exception ignored) {}
         try { LocationServices.getGeofencingClient(c).removeGeofences(intent(c, GEOFENCE, 3101, mutable())); } catch (Exception ignored) {}
         ConnectivityManager cm = c.getSystemService(ConnectivityManager.class);
         try { if (cm != null) cm.unregisterNetworkCallback(intent(c, NETWORK, 3102, mutable())); } catch (Exception ignored) {}
@@ -154,6 +175,27 @@ final class OfficeArrival {
         return null;   // Not an office network: nothing is sent.
     }
 
+    /** The Wi-Fi check (see {@link #wifiCheck}): sends the office network only when the phone is on one. */
+    public static class WifiCheck extends Worker {
+        public WifiCheck(@NonNull Context context, @NonNull WorkerParameters params) { super(context, params); }
+
+        @NonNull
+        @Override
+        public Result doWork() {
+            Context c = getApplicationContext();
+            Shell.init(c);
+            try {
+                if (!ShellStore.enrolled(c)) return Result.success();
+                JSONObject w = wifi(c);
+                android.util.Log.i(TAG, w != null ? "wifi check: an office Wi-Fi, reporting" : "wifi check: not an office Wi-Fi (or Android hides its name)");
+                if (w != null) send(c, w);
+            } catch (Exception e) {
+                android.util.Log.w(TAG, "wifi check not sent: " + e.getClass().getSimpleName());
+            }
+            return Result.success();
+        }
+    }
+
     /** Android's wake-ups: a geofence transition, a Wi-Fi network, or a reboot (geofences are cleared on boot). */
     public static class Receiver extends BroadcastReceiver {
         @Override
@@ -173,6 +215,9 @@ final class OfficeArrival {
                         String region = event.getGeofenceTransition() == Geofence.GEOFENCE_TRANSITION_EXIT ? "exit" : "enter";
                         for (Geofence g : event.getTriggeringGeofences()) {
                             JSONObject body = new JSONObject().put("officeId", g.getRequestId()).put("region", region);
+                            // POLISH-2: a dwell transition means the person already stayed HR's dwell; the server does
+                            // not make them wait it again.
+                            if ("enter".equals(region)) body.put("dwelled", event.getGeofenceTransition() == Geofence.GEOFENCE_TRANSITION_DWELL);
                             // Arriving on the office Wi-Fi as well: send both kinds of signal together.
                             JSONObject w = "enter".equals(region) ? wifi(c) : null;
                             if (w != null && g.getRequestId().equals(w.optString("officeId"))) body.put("wifi", w.getJSONObject("wifi"));

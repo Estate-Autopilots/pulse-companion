@@ -24,6 +24,8 @@ export type CompanionPayload = {
   presence: { dwellMinutes?:number; leaveMinutes?:number; autoCheckIn: boolean; offices: Office[]; sites: Site[] };
   /** PRESENCE-ONBOARD: Pulse noticed the person at an office and asked "Check in?" (until they answer). */
   arrival?: { at: string; office: string | null } | null;
+  /** POLISH-2: a session Pulse closed for review because nobody checked out (the time they left is still to send). */
+  unresolved?: { entryId: string; date: string; in: string; proposedEnd: string; reason: string; correctionPending: boolean } | null;
   /** This week's working days so far: on time, late, missed or not a working day. */
   week?: { onTime: number; late: number; missed: number; days: { date: string; state: 'on_time' | 'late' | 'missed' | 'off' | 'today' }[] } | null;
 };
