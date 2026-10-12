@@ -17,7 +17,9 @@ import androidx.annotation.NonNull;
 import androidx.core.content.ContextCompat;
 import androidx.work.Constraints;
 import androidx.work.ExistingPeriodicWorkPolicy;
+import androidx.work.ExistingWorkPolicy;
 import androidx.work.NetworkType;
+import androidx.work.OneTimeWorkRequest;
 import androidx.work.PeriodicWorkRequest;
 import androidx.work.WorkManager;
 import androidx.work.Worker;
@@ -44,8 +46,9 @@ import org.json.JSONObject;
  *   position, never a journey. Android's own geofencing is battery-friendly (no polling by Pulse).
  * - Joining a Wi-Fi network wakes Pulse; if it is an office network (by name), Pulse sends its name and access
  *   point. Android reveals these only with location permission. The network callback alone woke Pulse only when it
- *   was registered (QA-E2E P1-14), so a background check that needs Wi-Fi runs too: Android holds it while the phone
- *   is off Wi-Fi and runs it soon after the phone joins one (then about every 15 minutes while on Wi-Fi).
+ *   was registered (QA-E2E P1-14), so Android's job scheduler hands off too: on Wi-Fi a job waits for mobile data
+ *   (the phone left Wi-Fi), which arms one that waits for Wi-Fi (the phone joined) and checks the network; and about
+ *   every 15 minutes while on Wi-Fi.
  *
  * The server decides what happens (it asks "Check in?" or, with HR's setting, the person's consent and two signals,
  * checks in). Check-out is never automatic. Withdrawing consent removes the geofences and the Wi-Fi callback.
@@ -57,6 +60,8 @@ final class OfficeArrival {
     /** Log tag: what woke Pulse and whether a report went out (never a network name or a position). */
     private static final String TAG = "PulseArrival";
     static final String WIFI_CHECK = "pulse-office-wifi";
+    static final String WIFI_JOIN = "pulse-office-wifi-join";
+    static final String WIFI_LEAVE = "pulse-office-wifi-leave";
     /** Android allows 100 geofences per app; a person has a handful of offices at most. */
     private static final int LIMIT = 20;
 
@@ -126,15 +131,28 @@ final class OfficeArrival {
         cm.registerNetworkCallback(new NetworkRequest.Builder().addTransportType(NetworkCapabilities.TRANSPORT_WIFI).build(), pi);
     }
 
-    /** A periodic check that runs only on an unmetered network (Wi-Fi): the wake-up after joining one. */
+    /** A periodic check that runs only on an unmetered network (Wi-Fi), and a hand-off that wakes Pulse soon after the
+     *  phone joins Wi-Fi: on Wi-Fi a one-time job waits for mobile data (leaving); when it runs, it arms a one-time job
+     *  that waits for Wi-Fi again (joining). Android's job scheduler keeps both across Pulse being closed. */
     private static void wifiCheck(Context c) {
         Constraints wifi = new Constraints.Builder().setRequiredNetworkType(NetworkType.UNMETERED).build();
         PeriodicWorkRequest every = new PeriodicWorkRequest.Builder(WifiCheck.class, 15, TimeUnit.MINUTES).setConstraints(wifi).build();
         WorkManager.getInstance(c).enqueueUniquePeriodicWork(WIFI_CHECK, ExistingPeriodicWorkPolicy.KEEP, every);
+        watchLeave(c);
+    }
+
+    private static void watchLeave(Context c) {
+        Constraints metered = new Constraints.Builder().setRequiredNetworkType(NetworkType.METERED).build();
+        WorkManager.getInstance(c).enqueueUniqueWork(WIFI_LEAVE, ExistingWorkPolicy.KEEP, new OneTimeWorkRequest.Builder(WifiLeft.class).setConstraints(metered).build());
+    }
+
+    private static void watchJoin(Context c) {
+        Constraints wifi = new Constraints.Builder().setRequiredNetworkType(NetworkType.UNMETERED).build();
+        WorkManager.getInstance(c).enqueueUniqueWork(WIFI_JOIN, ExistingWorkPolicy.KEEP, new OneTimeWorkRequest.Builder(WifiCheck.class).setConstraints(wifi).build());
     }
 
     static void stop(Context c) {
-        try { WorkManager.getInstance(c).cancelUniqueWork(WIFI_CHECK); } catch (Exception ignored) {}
+        try { WorkManager wm = WorkManager.getInstance(c); wm.cancelUniqueWork(WIFI_CHECK); wm.cancelUniqueWork(WIFI_JOIN); wm.cancelUniqueWork(WIFI_LEAVE); } catch (Exception ignored) {}
         try { LocationServices.getGeofencingClient(c).removeGeofences(intent(c, GEOFENCE, 3101, mutable())); } catch (Exception ignored) {}
         ConnectivityManager cm = c.getSystemService(ConnectivityManager.class);
         try { if (cm != null) cm.unregisterNetworkCallback(intent(c, NETWORK, 3102, mutable())); } catch (Exception ignored) {}
@@ -191,7 +209,23 @@ final class OfficeArrival {
                 if (w != null) send(c, w);
             } catch (Exception e) {
                 android.util.Log.w(TAG, "wifi check not sent: " + e.getClass().getSimpleName());
+            } finally {
+                if (ShellStore.enrolled(c)) watchLeave(c);   // on Wi-Fi now: wait for the phone to leave it
             }
+            return Result.success();
+        }
+    }
+
+    /** The phone left Wi-Fi (it is on mobile data): wait for it to join Wi-Fi again. Reads and sends nothing. */
+    public static class WifiLeft extends Worker {
+        public WifiLeft(@NonNull Context context, @NonNull WorkerParameters params) { super(context, params); }
+
+        @NonNull
+        @Override
+        public Result doWork() {
+            Context c = getApplicationContext();
+            Shell.init(c);
+            if (ShellStore.enrolled(c)) { android.util.Log.i(TAG, "wifi watch: off Wi-Fi, waiting to join"); watchJoin(c); }
             return Result.success();
         }
     }
