@@ -59,7 +59,7 @@ final class Notifier {
         if (!enabled(context) || id == null || title == null || title.isEmpty()) return;
         Intent open = new Intent(context, MainActivity.class)
             .setAction("com.pulse.work.mobile.OPEN." + id)
-            .putExtra(MainActivity.EXTRA_HREF, href != null && href.startsWith("/") && !href.startsWith("//") ? href : "/inbox")
+            .putExtra(MainActivity.EXTRA_HREF, href != null && href.startsWith("/") && !href.startsWith("//") ? href : "/notifications")
             .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK | Intent.FLAG_ACTIVITY_SINGLE_TOP);
         PendingIntent tap = PendingIntent.getActivity(context, id.hashCode(), open, PendingIntent.FLAG_IMMUTABLE | PendingIntent.FLAG_UPDATE_CURRENT);
         NotificationCompat.Builder b = new NotificationCompat.Builder(context, UPDATES)

@@ -254,6 +254,14 @@ async fn companion_pair_poll(app: AppHandle) -> Result<Value, String> {
 #[tauri::command]
 fn companion_pair_cancel(state: State<'_, Companion>) { state.pair_cancel(); }
 
+/// The session with the company the saved Pulse names before pairing ("Join <company>'s Pulse?").
+#[tauri::command]
+async fn companion_about(app: AppHandle) -> Result<Value, String> {
+    tauri::async_runtime::spawn_blocking(move || app.state::<Companion>().about())
+        .await
+        .map_err(|_| "{\"message\":\"Pulse request interrupted\"}".to_string())
+}
+
 #[tauri::command]
 async fn companion_password(app: AppHandle, base: String, username: String, password: String, code: Option<String>) -> Result<Value, String> {
     tauri::async_runtime::spawn_blocking(move || {
@@ -262,6 +270,29 @@ async fn companion_password(app: AppHandle, base: String, username: String, pass
     })
     .await
     .map_err(|_| "{\"message\":\"Pulse request interrupted\"}".to_string())?
+}
+
+/// "Your Pulse address" on first run or in Settings. Moving to another server drops the old server's queued work,
+/// then signs this computer and the Pulse window out of it, before the new address is saved.
+#[tauri::command]
+async fn companion_address_set(app: AppHandle, address: String) -> Result<Value, String> {
+    if app.state::<Gate>().0.lock().unwrap().1 { return Err("Wait for Pulse to finish installing".into()); }
+    let work = app.clone();
+    let (session, left) = tauri::async_runtime::spawn_blocking(move || {
+        let mut left = false;
+        let session = work.state::<Companion>().set_address(&address, || {
+            if let Some(tracker) = work.try_state::<Tracker>() { let _ = tracker.sign_out(); }
+            work.state::<Companion>().sign_out();
+            appwin::signed_out(&work);
+            left = true;
+        }).map_err(err)?;
+        Ok::<_, String>((session, left))
+    })
+    .await
+    .map_err(|_| "{\"message\":\"Pulse request interrupted\"}".to_string())??;
+    if left { let _ = app.emit("pulse:signed-out", json!({})); }
+    let _ = app.emit("pulse:address", json!({}));
+    Ok(session)
 }
 
 #[tauri::command]
@@ -285,7 +316,8 @@ fn open_pulse(app: AppHandle, path: String) -> Result<(), String> {
 #[tauri::command]
 fn open_in_browser(state: State<'_, Companion>, path: String) -> Result<(), String> {
     let path = appwin::safe_path(&path).unwrap_or_else(|| "/me".into());
-    open_url(&format!("{}{}", companion::site(&state.base()), path))
+    let base = state.base().ok_or_else(|| "Enter your Pulse address first".to_string())?;
+    open_url(&format!("{}{}", companion::site(&base), path))
 }
 
 #[tauri::command]
@@ -513,7 +545,10 @@ fn menu_action(app: &AppHandle, id: &str) {
         att if att.starts_with("att:") && ATTENDANCE_ACTIONS.contains(&&att[4..]) => { let _ = app.emit_to(PANEL, "pulse:tray-action", json!({ "action": &att[4..] })); }
         "panel" => show_panel(app),
         "main" => appwin::open(app, None),
-        "web" => { let _ = open_url(&format!("{}/me", companion::site(&app.state::<Companion>().base()))); }
+        "web" => match app.state::<Companion>().base() {
+            Some(base) => { let _ = open_url(&format!("{}/me", companion::site(&base))); }
+            None => appwin::open(app, None),
+        },
         "settings" | "privacy" => show_settings(app, None),
         "check-updates" => { show_settings(app, Some("updates".into())); }
         "feedback" => show_settings(app, Some("feedback".into())),
@@ -562,6 +597,7 @@ pub fn run() {
             }
             let local_data_dir = app.path().app_local_data_dir()?;
             std::fs::create_dir_all(&local_data_dir)?;
+            app.state::<Companion>().open_address(local_data_dir.join("pulse-address.json"));
             // Optional activity metadata: starts paused and stays off unless the person accepts the published notice.
             let core = AgentCore::from_environment(local_data_dir.join("outbox.bin")).map_err(std::io::Error::other)?;
             app.manage(core.clone());
@@ -643,7 +679,9 @@ pub fn run() {
             companion_pair_start,
             companion_pair_poll,
             companion_pair_cancel,
+            companion_about,
             companion_password,
+            companion_address_set,
             companion_sign_out,
             open_pulse,
             open_in_browser,

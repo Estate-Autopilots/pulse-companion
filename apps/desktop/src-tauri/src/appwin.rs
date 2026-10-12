@@ -67,8 +67,9 @@ fn save_geometry(win: &WebviewWindow) {
     let _ = std::fs::write(path, serde_json::to_vec(&g).unwrap_or_default());
 }
 
-fn site(app: &AppHandle) -> url::Url {
-    url::Url::parse(&companion::site(&app.state::<Companion>().base())).unwrap_or_else(|_| url::Url::parse("https://pulse.estateautopilots.com").unwrap())
+/// The Pulse site of this computer's server; none until the person enters their Pulse address.
+fn site(app: &AppHandle) -> Option<url::Url> {
+    app.state::<Companion>().base().and_then(|base| url::Url::parse(&companion::site(&base)).ok())
 }
 fn is_local(url: &url::Url) -> bool {
     url.scheme() == "tauri" || matches!(url.host_str(), Some("tauri.localhost")) || matches!(url.scheme(), "about" | "data" | "blob")
@@ -183,8 +184,7 @@ pub fn go(app: &AppHandle, path: String) {
             std::thread::sleep(Duration::from_millis(500));
         }
         let session = companion.session();
-        if !session["signedIn"].as_bool().unwrap_or(false) { local(&app, "signed-out", None); return; }
-        let site = site(&app);
+        let Some(site) = site(&app).filter(|_| session["signedIn"].as_bool().unwrap_or(false)) else { local(&app, "signed-out", None); return; };
         if !reachable(&site) { local(&app, "offline", None); return; }
         let Some(win) = window(&app) else { return };
         // Browser cookies can outlive the pairing. Establish ownership on this start rather than
@@ -249,8 +249,7 @@ fn exchange(app: &AppHandle, win: &WebviewWindow, site: &url::Url) -> Result<(),
 fn navigation(app: &AppHandle, url: &url::Url) -> bool {
     if is_local(url) { return true; }
     if url.scheme() == "pulse" { crate::deep_link(app, url.as_str()); return false; }
-    let origin = site(app);
-    if same_site(url, &origin) {
+    if site(app).is_some_and(|origin| same_site(url, &origin)) {
         // Landing on /login while this computer is paired: sign the window in again (expired or revoked cookie),
         // unless that just happened, which means the person chose to sign out of the window.
         let session = app.state::<Companion>().session();
@@ -261,8 +260,7 @@ fn navigation(app: &AppHandle, url: &url::Url) -> bool {
                 let next = url.query_pairs().find(|(k, _)| k == "next").and_then(|(_, v)| safe_path(&v)).unwrap_or_else(|| "/".into());
                 let app = app.clone();
                 tauri::async_runtime::spawn_blocking(move || {
-                    let Some(win) = window(&app) else { return };
-                    let site = site(&app);
+                    let (Some(win), Some(site)) = (window(&app), site(&app)) else { return };
                     match exchange(&app, &win, &site) {
                         Ok(()) => { if let Ok(target) = site.join(&next) { let _ = win.navigate(target); } }
                         Err(_) => { if let Ok(login) = site.join("/login?app=1") { let _ = win.navigate(login); } }
@@ -279,8 +277,7 @@ fn navigation(app: &AppHandle, url: &url::Url) -> bool {
 
 /// Links that ask for a new window: Pulse pages stay in this window, everything else opens in the browser.
 fn new_window(app: &AppHandle, url: &url::Url) {
-    let site = site(app);
-    if same_site(url, &site) {
+    if site(app).is_some_and(|site| same_site(url, &site)) {
         if let Some(win) = window(app) { let _ = win.navigate(url.clone()); }
     } else if matches!(url.scheme(), "https" | "http" | "mailto") { let _ = crate::open_url(url.as_str()); }
 }
@@ -315,8 +312,7 @@ fn download(app: &AppHandle, event: DownloadEvent<'_>) -> bool {
 pub fn signed_out(app: &AppHandle) {
     *app.state::<AppWindow>().cookie_device.lock().unwrap() = None;
     let Some(win) = window(app) else { return };
-    let site = site(app);
-    if let Ok(cookies) = win.cookies_for_url(site.clone()) {
+    if let Some(Ok(cookies)) = site(app).map(|site| win.cookies_for_url(site)) {
         for c in cookies.into_iter().filter(|c| c.name() == COOKIE) { let _ = win.delete_cookie(c); }
     }
     *app.state::<AppWindow>().last_exchange.lock().unwrap() = None;

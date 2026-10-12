@@ -44,11 +44,11 @@ test('installs over the Expo app: same package, durable key, higher versionCode'
   assert.match(gradle, new RegExp(`def pulseVersion = '${pkg.version.replaceAll('.', '\\.')}'`));
   const [a, b, c] = pkg.version.split('.').map(Number);
   assert.ok(a * 1000000 + b * 1000 + c > PUBLISHED_EXPO_VERSION_CODE);
-  assert.equal(pkg.version, '1.1.1');
+  assert.equal(pkg.version, '1.1.2');
   assert.match(gradle, /storeType "PKCS12"[\s\S]*keyAlias "pulse"/, 'the Expo build used this key store and alias');
   const pbx = read('ios/App/App.xcodeproj/project.pbxproj');
   assert.equal((pbx.match(new RegExp(`MARKETING_VERSION = ${pkg.version.replaceAll('.', '\\.')};`, 'g')) ?? []).length, 2);
-  assert.equal((pbx.match(/CURRENT_PROJECT_VERSION = 1001001;/g) ?? []).length, 2);
+  assert.equal((pbx.match(/CURRENT_PROJECT_VERSION = 1001002;/g) ?? []).length, 2);
 });
 
 test('the Android manifest asks for no tracking and keeps credentials on the phone', () => {
@@ -65,6 +65,10 @@ test('the Android manifest asks for no tracking and keeps credentials on the pho
   }
   assert.doesNotMatch(read('android/app/src/main/java/com/pulse/work/mobile/OfficeArrival.java'), /getLatitude|getLongitude|"lat"\s*,|put\("lng"/, 'arrival sends an office and a signal kind, never a position');
   assert.doesNotMatch(manifest, /android\.permission\.CAMERA/, 'photos come from the camera app; no camera permission');
+  // PEOPLE-CONTACTS: "Take a photo" (an image field with capture) opens the camera in WKWebView, which iOS allows only
+  // with a camera usage description; Photo Library needs none (the system picker runs outside the app).
+  assert.match(read('ios/App/App/Info.plist'), /<key>NSCameraUsageDescription<\/key>\s*<string>[^<]{20,}<\/string>/, 'the iPhone app says why it may use the camera');
+  assert.doesNotMatch(read('ios/App/App/Info.plist'), /NSPhotoLibraryUsageDescription/, 'no photo-library access: the system picker hands over one picture');
   assert.match(manifest, /android:allowBackup="false"/);
   assert.match(manifest, /android:dataExtractionRules="@xml\/data_extraction_rules"/);
   assert.equal((manifest.match(/android:exported="true"/g) ?? []).length, 1, 'only the main activity is exported');
@@ -86,7 +90,10 @@ test('all production Pulse routes open in the app, including future web routes',
 
 test('the bridge has the same methods on Android, iPhone and in the web app', () => {
   const androidMethods = [...java.matchAll(/@PluginMethod[^\n]*\n(?:\s*@[^\n]+\n)*\s*public void (\w+)\(PluginCall/g)].map(m => m[1]).sort();
-  const iosMethods = [...swift.matchAll(/CAPPluginMethod\(name: "(\w+)"/g)].map(m => m[1]).sort();
+  // Capacitor's own checkPermissions/requestPermissions are inherited on Android; iOS must list them (POLISH-1).
+  const builtIn = ['checkPermissions', 'requestPermissions'];
+  const iosMethods = [...swift.matchAll(/CAPPluginMethod\(name: "(\w+)"/g)].map(m => m[1]).filter(m => !builtIn.includes(m)).sort();
+  for (const m of builtIn) assert.match(swift, new RegExp(`CAPPluginMethod\\(name: "${m}"[\\s\\S]*override public func ${m}\\(_ call: CAPPluginCall\\)`), `iOS dispatches and answers ${m}`);
   assert.deepEqual(iosMethods, androidMethods);
   const web = resolve(repo, 'apps/web/app/lib/native-shell.ts');
   if (existsSync(web)) {

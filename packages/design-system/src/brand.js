@@ -17,18 +17,37 @@ export const MARK = {
 /** "Pulse" in Inter at weight 640, tracked −2 %, as outlines (units: 2048 per em; cap height 1490). */
 export const WORDMARK = { d: 'M119 0V-1490H695Q861 -1490 982 -1431Q1102 -1373 1168 -1265Q1233 -1157 1233 -1009Q1233 -861 1166 -753Q1100 -645 978 -586Q856 -527 691 -527H273V-765H679Q765 -765 827 -795Q889 -825 923 -879Q956 -934 956 -1009Q956 -1084 923 -1138Q889 -1192 827 -1222Q765 -1251 679 -1251H401V0Z M1727 22Q1616 22 1532 -26Q1447 -75 1400 -168Q1353 -261 1353 -396V-1056H1622V-441Q1622 -329 1676 -271Q1730 -213 1828 -213Q1892 -213 1942 -239Q1992 -265 2020 -321Q2049 -376 2049 -463V-1056H2318V0H2053V-271H2103Q2052 -131 1960 -55Q1867 22 1727 22Z M2764 -1490V0H2495V-1490Z M3365 25Q3233 25 3129 -16Q3025 -57 2962 -136Q2900 -215 2891 -329H3156Q3165 -255 3217 -214Q3269 -173 3360 -173Q3448 -173 3498 -207Q3548 -241 3548 -294Q3548 -339 3511 -367Q3473 -395 3407 -408L3225 -445Q3073 -476 2994 -553Q2915 -630 2915 -751Q2915 -849 2968 -923Q3021 -997 3119 -1038Q3217 -1079 3349 -1079Q3481 -1079 3580 -1035Q3679 -992 3736 -913Q3792 -834 3795 -725H3544Q3543 -792 3491 -837Q3439 -882 3356 -882Q3276 -882 3230 -847Q3183 -811 3183 -760Q3183 -715 3219 -687Q3255 -659 3319 -645L3513 -606Q3671 -574 3746 -503Q3821 -432 3821 -316Q3821 -212 3763 -135Q3704 -59 3602 -17Q3499 25 3365 25Z M4419 24Q4260 24 4143 -47Q4026 -118 3962 -242Q3898 -367 3898 -527Q3898 -688 3963 -813Q4029 -938 4144 -1009Q4259 -1080 4408 -1080Q4524 -1080 4617 -1040Q4711 -1000 4779 -927Q4847 -854 4883 -753Q4920 -653 4920 -532V-459H4000V-638H4787L4666 -593Q4666 -678 4635 -740Q4604 -803 4548 -836Q4491 -870 4413 -870Q4336 -870 4279 -836Q4223 -803 4192 -740Q4161 -678 4161 -593V-475Q4161 -388 4192 -322Q4223 -257 4282 -220Q4342 -184 4426 -184Q4487 -184 4534 -202Q4581 -220 4613 -252Q4645 -285 4658 -329H4908Q4888 -225 4820 -145Q4751 -66 4648 -21Q4544 24 4419 24Z', box: [119, -1490, 4801, 1515] };
 
-/** The three directions explored for the owner, in the order the /brand page shows them; `chosen` marks the pick. */
+/**
+ * LAYOUT-SWEEP (owner, 11 Oct 2026: "the logo of Pulse is kind of pathetic; the previous one was also not great"): five
+ * new directions on the same 32-point grid, each judged at 16 px (a browser tab), 32 px (the rail) and as an app tile.
+ * Solid shapes only, no thin strokes: every one survives a favicon. `recommended` marks the pick; the mark in use
+ * (`LIVE`, "Pulse point") stays until the owner chooses, then MARK and markGlyph follow the choice.
+ */
 export const DIRECTIONS = [
-  { id: 'heartline', name: 'Heartline', glyph: (c) => `<path d="M6 17.5h4.6l2.6-6.6 4.2 11.4 3-7.6 1.4 2.8H26" fill="none" stroke="${c}" stroke-width="2.6" stroke-linecap="round" stroke-linejoin="round"/>`,
-    idea: 'The monitor trace refined: one even line, the beat off-centre.',
-    verdict: 'Familiar and calm, but every health and fitness app owns this line, and below 24 px the spike turns into a squiggle.' },
-  { id: 'point', name: 'Pulse point', chosen: true, glyph: (c) => markGlyph(c),
-    idea: 'An open P whose bowl holds the live point: the letter of Pulse and the moment something happens.',
-    verdict: 'Chosen. It is the only direction that says Pulse and pulse at once; three shapes hold at 16 px; the point is the same dot that sits beside Pip and on every presence avatar, so logo, bot and status read as one family; and the point can breathe in motion without the letter moving.' },
-  { id: 'ping', name: 'Ping', glyph: (c) => `<circle cx="16" cy="16" r="3.6" fill="${c}"/><path d="M16 7.2A8.8 8.8 0 1 1 7.2 16" fill="none" stroke="${c}" stroke-width="3" stroke-linecap="round"/>`,
-    idea: 'A point and the ripple it sends out: a signal, a notification, someone arriving.',
-    verdict: 'Clean and abstract, but at small sizes it reads as a loading spinner or a power button, and it says nothing about Pulse by name.' },
+  { id: 'blink', name: 'Blink', recommended: true,
+    glyph: (c, live = BRAND.live) => `<ellipse cx="12" cy="17.2" rx="2.7" ry="3.8" fill="${c}"/><ellipse cx="20" cy="17.2" rx="2.7" ry="3.8" fill="${c}"/><circle cx="24.4" cy="8" r="2.7" fill="${live}"/>`,
+    idea: 'Pip’s face: two eyes and the live point. Pulse is the colleague who keeps an eye on the work for you.',
+    verdict: 'Recommended. Unlike any letter mark, so it is remembered after one look; three solid shapes read at 16 px; Pip is this mark come alive (the eyes blink, the point beats), so logo, bot and every presence dot are one family.' },
+  { id: 'solid-p', name: 'Solid P',
+    glyph: (c, live = BRAND.live) => `<path fill="${c}" fill-rule="evenodd" d="M9.5 26.2V10a4 4 0 0 1 4-4h3.7a7.6 7.6 0 1 1 0 15.2h-1.6v5h-6.1Zm7.7-9.3a2.9 2.9 0 1 0 0-5.8 2.9 2.9 0 0 0 0 5.8Z"/><circle cx="17.2" cy="13.6" r="2.2" fill="${live}"/>`,
+    idea: 'A heavy P whose round counter holds the live point.',
+    verdict: 'The safe choice: strong at every size and plainly “Pulse”. But P marks are everywhere (Pinterest, PayPal, Product Hunt), and the two Ps before it were not loved.' },
+  { id: 'stem', name: 'Stem and point',
+    glyph: (c, live = BRAND.live) => `<rect x="9" y="9.5" width="5.4" height="17" rx="2.7" fill="${c}"/><circle cx="18.4" cy="14.4" r="6" fill="${c}"/><circle cx="18.4" cy="14.4" r="2.4" fill="${live}"/>`,
+    idea: 'A lowercase p built from a stem and a full disc; the disc is the point.',
+    verdict: 'Friendly and minimal, but below 24 px the stem and disc can read as an “r” or a pin.' },
+  { id: 'pebble', name: 'Pebble',
+    glyph: (c, live = BRAND.live) => `<path fill="${c}" d="M15 9.6c5.8 0 8.8 3.3 8.8 8.4 0 5.4-3.4 8-8.8 8s-8.8-2.6-8.8-8c0-5.1 3-8.4 8.8-8.4Z"/><circle cx="23.8" cy="8.4" r="2.7" fill="${live}"/>`,
+    idea: 'Pip’s body as a solid shape, the live point lifted off its shoulder.',
+    verdict: 'Soft and ownable, but without the eyes it reads as a speech bubble with a notification.' },
+  { id: 'rise', name: 'Rise',
+    glyph: (c, live = BRAND.live) => `<circle cx="9.4" cy="22" r="2.9" fill="${c}" fill-opacity=".7"/><circle cx="16" cy="16.2" r="3.4" fill="${c}"/><circle cx="23.2" cy="9.6" r="4" fill="${live}"/>`,
+    idea: 'Three points climbing, the last one live: progress, a signal, Pip thinking.',
+    verdict: 'Clean at any size, but abstract dots say “loading” as often as “growth”, and nothing in it is Pulse’s alone.' },
 ];
+/** The mark in use today ("Pulse point", UX-NOTIFY): app icons and favicons keep it until the owner picks a direction. */
+export const LIVE = { id: 'point', name: 'Pulse point', glyph: (c) => markGlyph(c),
+  idea: 'An open P whose bowl holds the live point.', verdict: 'In use since 10 Oct 2026. The owner found it weak; it stays only until a direction above is chosen.' };
 
 /** The chosen glyph in one colour (no tile): for mono, tray template and notification icons. */
 export function markGlyph(color = BRAND.iris) {
@@ -41,10 +60,10 @@ const tileFill = (id) => `<defs><linearGradient id="${id}" x1="0" y1="0" x2="1" 
  * The mark as an SVG document.
  * tile: on the iris squircle (colour, the default) or the bare glyph; color: glyph colour without a tile;
  * radius: tile corner (32 grid; 0 for full-bleed iPhone and maskable icons); scale: glyph size inside the tile;
- * direction: one of DIRECTIONS (the /brand page), the chosen one otherwise.
+ * direction: one of DIRECTIONS (the /brand page), the mark in use (LIVE) otherwise.
  */
 export function markSvg({ size = 32, tile = true, color, radius = 9, scale = 1, direction = 'point', id = 'pulse-tile', title } = {}) {
-  const dir = DIRECTIONS.find((d) => d.id === direction) ?? DIRECTIONS[1];
+  const dir = [...DIRECTIONS, LIVE].find((d) => d.id === direction) ?? LIVE;
   const ink = color ?? (tile ? BRAND.paper : BRAND.iris);
   const glyph = scale === 1 ? dir.glyph(ink) : `<g transform="translate(16 16) scale(${scale}) translate(-16 -16)">${dir.glyph(ink)}</g>`;
   const label = title ? `<title>${title.replace(/[<&]/g, '')}</title>` : '';

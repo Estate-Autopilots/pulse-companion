@@ -1,5 +1,6 @@
 //! Hosted-runner proofs for the public build repository only (GitHub Actions on Estate-Autopilots/pulse-companion
 //! with an absolute PULSE_ACCEPTANCE_DIR). They never pair, use a staff identity or touch attendance.
+//!   --admission-acceptance        signed-out native admission at PULSE_ACCEPTANCE_ADDRESS (the app has no default)
 //!   --keychain-acceptance write   store a synthetic sign-in the way a real sign-in is stored
 //!   --keychain-acceptance read    read it back with Keychain prompts disabled (an update must not prompt)
 //!   --ping-acceptance             show one real OS notification through Pulse's registered identity
@@ -22,7 +23,8 @@ pub fn run() -> bool {
     let args: Vec<String> = std::env::args().collect();
     let Some(dir) = dir() else { return false };
     if args.iter().any(|a| a == "--admission-acceptance") {
-        let result = crate::companion::Companion::new().admission_acceptance();
+        let address = std::env::var("PULSE_ACCEPTANCE_ADDRESS").unwrap_or_default();
+        let result = crate::companion::Companion::new().admission_acceptance(&address);
         receipt(&dir, "admission.json", json!({"version":env!("CARGO_PKG_VERSION"),"result":result}));
         return true;
     }

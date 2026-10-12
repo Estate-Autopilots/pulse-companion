@@ -54,12 +54,20 @@
             </intent-filter>
         </activity>
 
-        <receiver android:name=".AttendanceWidget" android:exported="false">
+        <receiver android:name=".AttendanceWidget" android:exported="false" android:label="Pulse · today">
             <intent-filter>
                 <action android:name="android.appwidget.action.APPWIDGET_UPDATE" />
                 <action android:name="android.intent.action.BOOT_COMPLETED" />
             </intent-filter>
             <meta-data android:name="android.appwidget.provider" android:resource="@xml/attendance_widget" />
+        </receiver>
+
+        <!-- POLISH-1: the small widget (2×1); the medium one above (3×2). Both draw for the size the launcher gives. -->
+        <receiver android:name=".AttendanceWidgetSmall" android:exported="false" android:label="Pulse · check-in">
+            <intent-filter>
+                <action android:name="android.appwidget.action.APPWIDGET_UPDATE" />
+            </intent-filter>
+            <meta-data android:name="android.appwidget.provider" android:resource="@xml/attendance_widget_small" />
         </receiver>
 
         <!-- Office arrival: geofence transitions, Wi-Fi networks and reboots (geofences are cleared on boot). -->

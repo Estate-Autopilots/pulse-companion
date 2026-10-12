@@ -44,6 +44,9 @@ public class PulseShellPlugin: CAPPlugin, CAPBridgedPlugin, CLLocationManagerDel
         CAPPluginMethod(name: "openNotificationSettings", returnType: CAPPluginReturnPromise),
         CAPPluginMethod(name: "openExternal", returnType: CAPPluginReturnPromise),
         CAPPluginMethod(name: "saveFile", returnType: CAPPluginReturnPromise),
+        // POLISH-1: Capacitor dispatches its permission methods only when listed (else the page's promise never settles).
+        CAPPluginMethod(name: "checkPermissions", returnType: CAPPluginReturnPromise),
+        CAPPluginMethod(name: "requestPermissions", returnType: CAPPluginReturnPromise),
     ]
 
     static let base = "https://pulse.estateautopilots.com/api/native/v0/"
@@ -60,6 +63,7 @@ public class PulseShellPlugin: CAPPlugin, CAPBridgedPlugin, CLLocationManagerDel
     private var regions: CLLocationManager?
     private var locationCall: CAPPluginCall?
     private var locationTimeout: DispatchWorkItem?
+    private var permissionCall: CAPPluginCall?
 
     // MARK: Keychain (this device only, readable after the first unlock)
     private let service = "com.pulse.work.mobile.shell"
@@ -90,7 +94,7 @@ public class PulseShellPlugin: CAPPlugin, CAPBridgedPlugin, CLLocationManagerDel
 
     private var enrolled: Bool { keychainGet("refresh") != nil && keychainGet("device") != nil }
 
-    private var version: String { Bundle.main.infoDictionary?["CFBundleShortVersionString"] as? String ?? "1.1.1" }
+    private var version: String { Bundle.main.infoDictionary?["CFBundleShortVersionString"] as? String ?? "1.1.2" }
 
     // MARK: Gateway
     private func gateway(_ path: String, _ body: [String: Any]?, bearer: String? = nil, done: @escaping (Int, [String: Any]) -> Void) {
@@ -165,6 +169,8 @@ public class PulseShellPlugin: CAPPlugin, CAPBridgedPlugin, CLLocationManagerDel
                 "platform": "ios", "version": self.version, "build": Int(Bundle.main.infoDictionary?["CFBundleVersion"] as? String ?? "") ?? 1001001,
                 "enrolled": self.enrolled, "deviceId": self.orNull(self.keychainGet("device")), "personId": self.orNull(self.keychainGet("person")),
                 "notifications": settings.authorizationStatus == .authorized, "pushReady": false, "pushActive": false,
+                // POLISH-1: iOS asks once; after that only Settings → Pulse → Notifications can turn them on.
+                "notificationsAsk": settings.authorizationStatus == .notDetermined ? "prompt" : [.authorized, .provisional, .ephemeral].contains(settings.authorizationStatus) ? "granted" : "denied",
             ])
         }
     }
@@ -274,14 +280,20 @@ public class PulseShellPlugin: CAPPlugin, CAPBridgedPlugin, CLLocationManagerDel
             let read = {
                 self.gateway("companion/presence", nil, bearer: token) { status, json in
                     guard status == 200 else { return call.reject("Pulse could not read your office presence choice. Try again.", "presence") }
-                    call.resolve(json)
+                    DispatchQueue.main.async {
+                        // What iOS lets Pulse notice, as on Android: the office area needs "Always".
+                        let state = (self.regions ?? CLLocationManager()).authorizationStatus
+                        var out = json
+                        out["arrival"] = ["location": state == .authorizedWhenInUse || state == .authorizedAlways, "background": state == .authorizedAlways]
+                        call.resolve(out)
+                    }
                 }
             }
             if let enabled = call.getBool("enabled") {
                 self.gateway("companion/presence", ["consent": enabled, "autoConsent": false, "consentOnly": true], bearer: token) { status, _ in
                     guard status == 200 else { return call.reject("Pulse could not save your office presence choice. Try again.", "presence") }
-                    // Turning helpers on is the tap that may ask iOS for "Always" (office arrival with Pulse closed).
-                    if enabled { DispatchQueue.main.async { let m = self.regions ?? CLLocationManager(); m.delegate = self; self.regions = m; m.requestAlwaysAuthorization() } }
+                    // POLISH-1: iOS is asked in two steps by the page (while using, then "Always" with Pulse's own
+                    // explanation), through requestPermissions; turning helpers on asks nothing by itself.
                     self.monitorOffices()
                     read()
                 }
@@ -348,6 +360,43 @@ public class PulseShellPlugin: CAPPlugin, CAPBridgedPlugin, CLLocationManagerDel
                 guard status == 200, json["enabled"] as? Bool == true else { return self.stopOffices() }
                 self.gateway("companion/presence", ["officeId": office, "region": kind, "consent": true, "autoConsent": json["auto"] as? Bool ?? false], bearer: token) { _, _ in }
             }
+        }
+    }
+
+    // MARK: Permissions (POLISH-1)
+    /// Location while using Pulse (office Wi-Fi and a tap), then "Always" (office arrival with Pulse closed).
+    private func permissionStates() -> [String: Any] {
+        let state = (regions ?? CLLocationManager()).authorizationStatus
+        let location = state == .authorizedWhenInUse || state == .authorizedAlways ? "granted" : state == .notDetermined ? "prompt" : "denied"
+        let background = state == .authorizedAlways ? "granted" : state == .denied || state == .restricted ? "denied" : "prompt"
+        return ["location": location, "background": background]
+    }
+
+    @objc override public func checkPermissions(_ call: CAPPluginCall) {
+        DispatchQueue.main.async { call.resolve(self.permissionStates()) }
+    }
+
+    @objc override public func requestPermissions(_ call: CAPPluginCall) {
+        let wanted = call.getArray("permissions", String.self) ?? ["location"]
+        DispatchQueue.main.async {
+            let manager = self.regions ?? CLLocationManager()
+            manager.delegate = self
+            self.regions = manager
+            let before = manager.authorizationStatus
+            self.permissionCall = call
+            if wanted.contains("background") { manager.requestAlwaysAuthorization() } else { manager.requestWhenInUseAuthorization() }
+            // iOS answers through the delegate when it asked; when it did not ask (already decided), nothing arrives,
+            // so the answer is the state once Pulse is still in front after a moment.
+            func settle(_ waited: Double) {
+                guard let pending = self.permissionCall, pending === call else { return }
+                if manager.authorizationStatus != before || (waited >= 1.5 && UIApplication.shared.applicationState == .active) || waited >= 120 {
+                    self.permissionCall = nil
+                    pending.resolve(self.permissionStates())
+                    return
+                }
+                DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) { settle(waited + 0.5) }
+            }
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) { settle(0.5) }
         }
     }
 

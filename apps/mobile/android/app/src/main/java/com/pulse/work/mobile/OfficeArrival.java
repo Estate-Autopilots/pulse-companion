@@ -43,6 +43,8 @@ final class OfficeArrival {
     static final String GEOFENCE = "com.pulse.work.mobile.OFFICE_GEOFENCE";
     static final String NETWORK = "com.pulse.work.mobile.OFFICE_NETWORK";
     private static final ExecutorService WORK = Executors.newSingleThreadExecutor();
+    /** Log tag: what woke Pulse and whether a report went out (never a network name or a position). */
+    private static final String TAG = "PulseArrival";
     /** Android allows 100 geofences per app; a person has a handful of offices at most. */
     private static final int LIMIT = 20;
 
@@ -75,8 +77,9 @@ final class OfficeArrival {
                 ShellStore.put(c, "arrival-offices", presence.optJSONArray("offices") == null ? "[]" : presence.getJSONArray("offices").toString());
                 fences(c, presence.optJSONArray("offices"), presence.optInt("dwellMinutes", 3));
                 network(c);
-            } catch (Exception ignored) {
+            } catch (Exception e) {
                 // Offline or signed out: keep what is registered; the next app start or network change tries again.
+                android.util.Log.w(TAG, "sync skipped: " + e.getClass().getSimpleName());
             }
         });
     }
@@ -158,6 +161,7 @@ final class OfficeArrival {
             Context c = context.getApplicationContext();
             Shell.init(c);
             String action = i.getAction();
+            android.util.Log.i(TAG, "woken: " + action);
             if (Intent.ACTION_BOOT_COMPLETED.equals(action) || Intent.ACTION_MY_PACKAGE_REPLACED.equals(action)) { sync(c); return; }
             PendingResult done = goAsync();
             WORK.execute(() -> {
@@ -176,10 +180,12 @@ final class OfficeArrival {
                         }
                     } else if (NETWORK.equals(action)) {
                         JSONObject w = wifi(c);
+                        android.util.Log.i(TAG, w != null ? "network: an office Wi-Fi, reporting" : "network: not an office Wi-Fi (or Android hides its name)");
                         if (w != null) send(c, w);
                     }
-                } catch (Exception ignored) {
+                } catch (Exception e) {
                     // Signed out, revoked or offline: the next event or app start tries again.
+                    android.util.Log.w(TAG, "report not sent: " + e.getClass().getSimpleName());
                 } finally { done.finish(); }
             });
         }
