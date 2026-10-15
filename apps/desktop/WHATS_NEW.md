@@ -1,1 +1,1 @@
-Pip’s compact update card keeps Install and restart and Later in reach, with Pulse styling and a What’s new disclosure. Pulse checks on launch and every four hours; Settings shows the same live update status.
+Pulse uses your company’s own Pulse address: a new computer asks for it once, and Settings → Account changes it. You stay signed in. Pip names your company before you connect. After-hours check-ins get “Shift is over” four hours later.
