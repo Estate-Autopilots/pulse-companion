@@ -336,7 +336,8 @@ if phase wifi; then
   wakes=$(grep -c 'woken: com.pulse.work.mobile.OFFICE_NETWORK' "$OUT/wifi-background-arrival-log.txt" 2>/dev/null || echo 0)
   result wifi_wakeups info "Android woke Pulse for a network change $wakes time(s) during the session: $(tr '\n' ' ' < "$OUT/wifi-background-arrival-log.txt" 2>/dev/null | grep -oE 'network: [^(]*' | sort | uniq -c | tr '\n' ';')"
   result wifi_office_network "$( echo "$matched" | grep -q "'$ssid'" && echo pass || echo fail)" "Allow all the time: Android shows '$raw'; office match: $matched"
-  # Known (P1): Android wakes Pulse for Wi-Fi only when it registers its callback, not when Wi-Fi is joined later.
+  # QA-E2E P1-14: the network callback woke Pulse only when registered. POLISH-2 (shell 1.1.3) hands off through the job
+  # scheduler (leave → join): the Google APIs image reports the re-join; the AOSP image did not within this wait.
   result wifi_join_reported "$( echo "$got" | grep -q "\"ssid\":\"$ssid\"" && echo pass || echo info)" "$(echo "${got:-nothing sent after joining Wi-Fi again}" | cut -c1-220)"
   echo "$got" | grep -qE '"lat"|"lng"|"latitude"' && result wifi_no_position fail "a position was sent" || result wifi_no_position pass "no position in the report"
   # Without location permission Android hides the network name: nothing is sent.

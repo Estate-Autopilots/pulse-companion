@@ -71,6 +71,9 @@ public class InboxWorker extends Worker {
         String cursor = ShellStore.plain(context, "cursor");
         String page = null;
         int total = 0;
+        // POLISH-2 (QA-E2E P1-8): with notifications turned off nothing can be shown, so nothing is acknowledged:
+        // the server keeps these items as not received by this phone instead of counting them as delivered.
+        boolean blocked = notify && !Notifier.enabled(context);
         for (int round = 0; round < 5; round++) {
             StringBuilder path = new StringBuilder("companion/updates");
             String sep = "?";
@@ -84,7 +87,7 @@ public class InboxWorker extends Worker {
             JSONArray received = new JSONArray();
             if (rows != null) for (int i = 0; i < rows.length(); i++) {
                 JSONObject row = rows.getJSONObject(i);
-                if (!row.optBoolean("pingAllowed")) continue;
+                if (!row.optBoolean("pingAllowed") || blocked) continue;
                 if (notify) Notifier.post(context, row.optString("id"), row.optString("title"), row.optString("detail", ""), row.optString("href", "/notifications"), row.optString("eventType", null));
                 received.put(row.optString("id"));
             }

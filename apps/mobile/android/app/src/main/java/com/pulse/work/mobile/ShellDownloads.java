@@ -42,9 +42,12 @@ final class ShellDownloads implements DownloadListener {
         String scheme = uri.getScheme();
         if ("blob".equals(scheme) || "data".equals(scheme)) {
             // Files the page made itself: the page hands the bytes over through the bridge (PulseShell.saveFile).
-            String name = URLUtil.guessFileName(url, contentDisposition, mimetype);
+            // POLISH-2 (QA-E2E P2-7): such a link carries no file name (Android made "pdf_base64_JVBERi0x….pdf" of it):
+            // the link's own download name when it is on the page, else "Pulse file <date>.<type>".
+            String name = pageFileName(mimetype);
             web.evaluateJavascript("(async()=>{try{const b=await (await fetch(" + quote(url) + ")).blob();const r=new FileReader();"
-                + "r.onload=()=>window.Capacitor&&Capacitor.Plugins.PulseShell.saveFile({name:" + quote(name) + ",mime:b.type||" + quote(mimetype == null ? "" : mimetype)
+                + "const a=[...document.querySelectorAll('a[download]')].find(x=>x.href===" + quote(url) + ");const n=a&&a.getAttribute('download')||" + quote(name) + ";"
+                + "r.onload=()=>window.Capacitor&&Capacitor.Plugins.PulseShell.saveFile({name:n,mime:b.type||" + quote(mimetype == null ? "" : mimetype)
                 + ",base64:String(r.result).split(',')[1]});r.readAsDataURL(b);}catch(e){}})()", null);
             return;
         }
@@ -86,6 +89,13 @@ final class ShellDownloads implements DownloadListener {
         });
     }
 
+    /** A readable name for a file the page made, from its type: "Pulse file 2026-10-12 14.05.pdf". */
+    static String pageFileName(String mime) {
+        String ext = mime == null ? null : MimeTypeMap.getSingleton().getExtensionFromMimeType(mime.split(";")[0].trim());
+        String stamp = new java.text.SimpleDateFormat("yyyy-MM-dd HH.mm", java.util.Locale.US).format(new java.util.Date());
+        return "Pulse file " + stamp + (ext == null ? "" : "." + ext);
+    }
+
     static File target(Context context, String name) {
         File dir = new File(context.getCacheDir(), "downloads");
         dir.mkdirs();
@@ -103,7 +113,9 @@ final class ShellDownloads implements DownloadListener {
         Uri uri = FileProvider.getUriForFile(activity, activity.getPackageName() + ".fileprovider", file);
         Intent view = new Intent(Intent.ACTION_VIEW).setDataAndType(uri, type).addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION);
         try {
-            activity.startActivity(Intent.createChooser(view, "Open " + file.getName()));
+            // POLISH-2 (QA-E2E P2-8): not through a chooser, which never throws and dead-ends at "No apps can perform
+            // this action" when no viewer exists; Android picks or asks itself, and with no viewer the share sheet opens.
+            activity.startActivity(view);
         } catch (ActivityNotFoundException e) {
             share(activity, uri, type, file.getName());
         }

@@ -126,3 +126,14 @@ test('prefs are sanitised', () => {
   assert.equal('unknown' in p, false);
   assert.equal(prefsWith(null).autoCheckIn, false, 'automatic check-in is opt-in');
 });
+
+test('POLISH-2: "Shift is over" waits four hours after a check-in made after the shift (QA-E2E P2-19)', () => {
+  const p = demoPayload('in', IST('20:11'));
+  const after = { ...p, entry: { ...p.entry, in: new Date(IST('20:11')).toISOString() } };
+  assert.ok(Date.parse(after.shiftEndsAt) <= IST('20:11'), 'the demo shift ends before 20:11');
+  assert.deepEqual(dueReminders(after, {}, IST('20:12')).filter((r) => r.kind === 'check-out'), []);
+  assert.equal(dueReminders(after, {}, IST('00:12') + 86400000).filter((r) => r.kind === 'check-out').length, 1);
+  assert.equal(reminderPlan(after, {}, IST('20:12')).find((r) => r.kind === 'check-out')?.at, IST('20:11') + 4 * 3600000);
+  const onTime = demoPayload('in', IST('17:00'));
+  assert.equal(reminderPlan(onTime, {}, IST('17:00')).find((r) => r.kind === 'check-out')?.at, Date.parse(onTime.shiftEndsAt), 'a usual day: at the shift end');
+});

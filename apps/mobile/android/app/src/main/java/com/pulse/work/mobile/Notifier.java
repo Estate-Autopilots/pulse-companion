@@ -70,8 +70,10 @@ final class Notifier {
             .setContentIntent(tap)
             .setCategory(NotificationCompat.CATEGORY_MESSAGE)
             .setPriority(NotificationCompat.PRIORITY_HIGH)
-            .setGroup(GROUP)
             .setNumber(Math.max(count, 1));
+        // POLISH-2 (QA-E2E P2-13): an attendance question stands on its own, so its one-tap answer is visible without
+        // expanding Pulse's bundle; everything else is bundled.
+        if (answer(eventType) == null) b.setGroup(GROUP);
         if (body != null && !body.isEmpty()) b.setContentText(body);
         String answer = answer(eventType);
         if (answer != null) {

@@ -22,6 +22,13 @@ export function prefsWith(saved) {
   return out;
 }
 
+/** When "Shift is over" is due: the shift's end, or four hours after a check-in made after it (POLISH-2, QA-E2E P2-19:
+ *  someone working after hours was told to check out the moment they checked in). */
+function checkOutAt(payload, end) {
+  const began = Date.parse(payload.entry?.in ?? '');
+  return Number.isFinite(began) && began >= end ? began + 4 * 3600000 : end;
+}
+
 /** Reminders due at `at` that have not been shown yet (`shown` is a Set or array of reminder ids). */
 export function dueReminders(payload, prefs, at, shown = []) {
   if (!payload || payload.attendanceEnabled !== true) return [];
@@ -36,7 +43,7 @@ export function dueReminders(payload, prefs, at, shown = []) {
     const away = liveSeconds(payload.entry, at).onBreak;
     if (away >= p.breakMinutes * 60) add({ id: `break:${payload.entry.breakStartedAt}`, kind: 'break-back', action: 'break-end', title: 'Back from your break?', body: `You’ve been away ${duration(away)}. Tap when you’re back.` });
   }
-  if (p.checkOut && (state === 'in' || state === 'break') && Number.isFinite(end) && at >= end) {
+  if (p.checkOut && (state === 'in' || state === 'break') && Number.isFinite(end) && at >= checkOutAt(payload, end)) {
     add({ id: `check-out:${payload.today}`, kind: 'check-out', action: 'check-out', title: 'Shift is over', body: `It’s past ${friendlyClock(payload.shift.end)}. Check out when you’re done for the day.` });
   }
   return out;
@@ -54,8 +61,8 @@ export function reminderPlan(payload, prefs, at, days = 7) {
   if (p.checkIn && payload.state === 'out' && payload.shift?.workingDay && Number.isFinite(start) && start > at) {
     plan.push({ id: `check-in:${payload.today}`, at: start, kind: 'check-in', action: 'check-in', title: 'Time to check in', body: `Your shift starts at ${friendlyClock(payload.shift.start)}.` });
   }
-  if (p.checkOut && (payload.state === 'in' || payload.state === 'break') && Number.isFinite(end) && end > at) {
-    plan.push({ id: `check-out:${payload.today}`, at: end, kind: 'check-out', action: 'check-out', title: 'Shift is over', body: `Check out when you’re done. Shift ended at ${friendlyClock(payload.shift.end)}.` });
+  if (p.checkOut && (payload.state === 'in' || payload.state === 'break') && Number.isFinite(end) && checkOutAt(payload, end) > at) {
+    plan.push({ id: `check-out:${payload.today}`, at: checkOutAt(payload, end), kind: 'check-out', action: 'check-out', title: 'Shift is over', body: `Check out when you’re done. Shift ended at ${friendlyClock(payload.shift.end)}.` });
   }
   if (p.breakBack && payload.state === 'break' && payload.entry?.breakStartedAt) {
     const due = Date.parse(payload.entry.breakStartedAt) + p.breakMinutes * 60000;
