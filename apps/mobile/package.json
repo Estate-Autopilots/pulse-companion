@@ -5,7 +5,7 @@
   "description": "Pulse for Android and iPhone: a thin Capacitor shell around the production Pulse web app.",
   "scripts": {
     "test": "node --test --test-concurrency=2 tests/*.test.mjs",
-    "sync": "cap sync"
+    "sync": "node scripts/configure-origin.mjs && cap sync"
   },
   "dependencies": {
     "@capacitor/android": "8.5.3",

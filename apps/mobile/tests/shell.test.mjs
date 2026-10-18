@@ -1,10 +1,15 @@
 // Static checks of the Pulse phone app shell. Gradle and Xcode run only on hosted runners; these run everywhere.
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { existsSync, readFileSync, readdirSync } from 'node:fs';
+import { existsSync, readFileSync, readdirSync, cpSync, mkdtempSync, mkdirSync, writeFileSync, rmSync } from 'node:fs';
 import { createHash } from 'node:crypto';
-import { dirname, resolve } from 'node:path';
+import { execFileSync } from 'node:child_process';
+import { tmpdir } from 'node:os';
+import { runInNewContext } from 'node:vm';
+import { dirname, resolve, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { configureOrigin, validateOrigin, DEFAULT_ORIGIN } from '../scripts/configure-origin.mjs';
+import { releaseURL } from '../../../packages/companion/src/updates.js';
 
 const app = resolve(dirname(fileURLToPath(import.meta.url)), '..');
 const repo = resolve(app, '../..');
@@ -123,4 +128,106 @@ test('the device credential never reaches the page', () => {
 test('no Expo or React Native code remains', () => {
   assert.ok(!Object.keys({ ...pkg.dependencies, ...pkg.devDependencies }).some(d => /^(expo|react-native|@expo\/|react$)/.test(d)));
   assert.equal(createHash('sha256').update(PULSE_SIGNING_SHA256).digest('hex').length, 64);
+});
+
+const scratch = () => mkdtempSync(join(process.env.PAPERCLIP_RUN_SCRATCH_DIR || tmpdir(), 'pulse-origin-'));
+const originFiles = ['capacitor.config.json', 'www/index.html', 'www/offline.html',
+  'android/app/src/main/java/com/pulse/work/mobile/MainActivity.java', 'android/app/src/main/AndroidManifest.xml'];
+
+test('one origin configures the complete Android shell; omitted input restores the exact default', () => {
+  const dir = scratch();
+  try {
+    for (const path of ['capacitor.config.json', 'www', 'android/app/src/main']) {
+      cpSync(resolve(app, path), resolve(dir, path), { recursive: true });
+    }
+    const contents = path => readFileSync(resolve(dir, path), 'utf8');
+    configureOrigin(dir);
+    for (const path of originFiles) assert.equal(contents(path), read(path), `default ${path} unchanged`);
+    const origin = 'https://pulse.example.com', host = new URL(origin).hostname;
+    configureOrigin(dir, origin);
+    configureOrigin(dir, origin); // Repeated syncs are safe.
+    configureOrigin(dir, 'https://com');
+    configureOrigin(dir, 'https://company.example');
+    assert.equal(JSON.parse(contents('capacitor.config.json')).server.url, 'https://company.example');
+    configureOrigin(dir, origin); // A short previous host must not rewrite Java packages or identifiers.
+    assert.match(contents(originFiles[3]), /^package com\.pulse\.work\.mobile;/);
+    for (const path of originFiles) assert.doesNotMatch(contents(path), /estateautopilots/i, path);
+    for (const file of readdirSync(resolve(dir, 'android/app/src/main/java/com/pulse/work/mobile'))) {
+      assert.doesNotMatch(contents(`android/app/src/main/java/com/pulse/work/mobile/${file}`), /estateautopilots/i, file);
+    }
+    const built = JSON.parse(contents('capacitor.config.json'));
+    assert.equal(built.server.url, origin);
+    assert.deepEqual(built.server.allowNavigation, []);
+    assert.equal(built.appId, config.appId);
+    assert.ok(contents(originFiles[3]).includes(`static final String HOST = "${host}";`));
+    assert.deepEqual([...contents(originFiles[4]).matchAll(/android:host="([^"]+)"/g)].map(m => m[1]), [host]);
+    assert.ok(contents('www/index.html').includes(`location.replace('${origin}/dashboard')`));
+    // Retry never follows an attacker-controlled external URL (including lookalike hosts and userinfo).
+    const code = contents('www/offline.html').match(/<script>([\s\S]*?)<\/script>/)[1];
+    for (const from of [origin + '/notes', 'https://external.example/', origin + '.evil/notes', origin + '@evil/']) {
+      const context = { URLSearchParams, location: { search: '?from=' + encodeURIComponent(from) },
+        document: { getElementById: () => ({ addEventListener() {} }) }, window: { addEventListener() {} }, setInterval() {} };
+      runInNewContext(code, context);
+      assert.equal(context.target, from === origin + '/notes' ? from : origin + '/');
+    }
+    for (const file of ['ShellWebViewClient', 'ShellDownloads', 'PulseShellPlugin']) {
+      assert.match(contents(`android/app/src/main/java/com/pulse/work/mobile/${file}.java`), /MainActivity\.HOST\.equals\(/);
+    }
+    assert.match(contents('android/app/src/main/java/com/pulse/work/mobile/Gateway.java'), /BASE = MainActivity\.ORIGIN/);
+    assert.match(contents('android/app/src/main/java/com/pulse/work/mobile/Updater.java'), /MANIFEST = MainActivity\.ORIGIN/);
+    configureOrigin(dir);
+    for (const path of originFiles) assert.equal(contents(path), read(path), `restored ${path}`);
+    assert.equal(validateOrigin(), DEFAULT_ORIGIN);
+  } finally { rmSync(dir, { recursive: true, force: true }); }
+});
+
+test('origin rejects ambiguous URLs before changing files', () => {
+  for (const value of ['http://pulse.example.com', 'https://pulse.example.com/', 'https://pulse.example.com/path',
+    'https://pulse.example.com?x=1', 'https://pulse.example.com#x', 'https://user@pulse.example.com',
+    'https://pulse.example.com:443', 'https://pulse.example.com\\evil', 'https://pulse.example.com\n',
+    'https://-invalid.example', 'https://pulse..example', 'https://', ' https://pulse.example.com']) {
+    assert.throws(() => configureOrigin('/does-not-exist', value), /origin must be/, value);
+  }
+});
+
+test('host releases keep trusted URLs and publish only their own download entry; default publication is unchanged', () => {
+  const tags = [];
+  for (const origin of ['', 'https://pulse.example.com', 'https://another.example.com']) {
+    const dir = scratch();
+    try {
+      mkdirSync(join(dir, 'artifacts'));
+      mkdirSync(join(dir, 'bin'));
+      writeFileSync(join(dir, 'artifacts', `Pulse-${pkg.version}-android.apk`), 'synthetic-apk');
+      if (!origin) writeFileSync(join(dir, 'artifacts', `Pulse-${pkg.version}-ios-simulator.zip`), 'synthetic-ios');
+      writeFileSync(join(dir, 'bin/gh'), `#!/usr/bin/env node\nrequire('node:fs').appendFileSync('calls.jsonl', JSON.stringify(process.argv.slice(2))+'\\n');\n`, { mode: 0o755 });
+      const sha = 'a'.repeat(40);
+      const result = JSON.parse(execFileSync(process.execPath, [resolve(app, 'scripts/publish-prerelease.mjs')], {
+        cwd: dir, encoding: 'utf8', env: { ...process.env, PATH: join(dir, 'bin') + ':' + process.env.PATH,
+          RELEASE_VERSION: pkg.version, GITHUB_SHA: sha, GITHUB_RUN_ID: '123', GITHUB_REF: 'refs/heads/main',
+          GITHUB_REPOSITORY: 'Estate-Autopilots/pulse-companion', PULSE_ORIGIN: origin },
+      }));
+      const suffix = origin ? createHash('sha256').update(origin).digest('hex').slice(0, 8) : '';
+      assert.equal(result.tag, `companion-v${pkg.version}-${sha.slice(0, 7)}${suffix}`);
+      tags.push(result.tag);
+      const entryName = origin ? `android-${new URL(origin).hostname}-entry.json` : 'android-channel-entry.json';
+      const entry = JSON.parse(readFileSync(join(dir, 'release', entryName)));
+      assert.equal(entry.origin, origin || undefined);
+      assert.equal(entry.versionCode, 1001003);
+      assert.equal(entry.size, Buffer.byteLength('synthetic-apk'));
+      assert.equal(entry.sha256, createHash('sha256').update('synthetic-apk').digest('hex'));
+      assert.equal(entry.url, `https://github.com/Estate-Autopilots/pulse-companion/releases/download/${result.tag}/${entry.name}`);
+      assert.ok(releaseURL(entry.url)); // Installed app release trust rule accepts the host-suffixed tag.
+      const calls = readFileSync(join(dir, 'calls.jsonl'), 'utf8').trim().split('\n').map(JSON.parse);
+      const upload = calls.find(args => args[1] === 'upload');
+      assert.equal(upload[2], 'companion-phone');
+      assert.deepEqual(upload.slice(3, -3), [`release/${entryName}`, ...(!origin ? ['release/ios-simulator-entry.json'] : [])]);
+      assert.ok(!calls.flat().includes('companion-test'));
+      if (origin) {
+        assert.doesNotMatch(calls.flat().join(' '), /android-channel-entry|ios-simulator-entry/);
+        assert.ok(calls.find(args => args[1] === 'create').includes(`Pulse for Android ${pkg.version} (${new URL(origin).hostname}, pre-release)`));
+        assert.ok(!existsSync(join(dir, 'release/ios-simulator-entry.json')));
+      }
+    } finally { rmSync(dir, { recursive: true, force: true }); }
+  }
+  assert.equal(new Set(tags).size, tags.length);
 });

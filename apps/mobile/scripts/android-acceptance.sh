@@ -14,6 +14,7 @@ OUT=${3:-screens}
 PKG=com.pulse.work.mobile
 # The sign-in form itself (its Username field), not merely a page that mentions signing in.
 SIGNIN=${PULSE_SIGNIN_TEXT:-Username}
+ORIGIN=${PULSE_ORIGIN:-https://pulse.estateautopilots.com}
 ACT=$PKG/.MainActivity
 # A lost emulator must fail with diagnostics instead of hanging an entire hosted job in adb.
 ADB_BIN=$(command -v adb)
@@ -196,7 +197,7 @@ pass edge_to_edge "gesture and 3-button navigation, 360 and 390, light and dark 
 
 ready
 # 3. Back: through Pulse's history, then minimise at the start (never a blank page, never an exit).
-adb shell am start -W -n "$ACT" -a android.intent.action.VIEW -d "https://pulse.estateautopilots.com/apps/android" >/dev/null
+adb shell am start -W -n "$ACT" -a android.intent.action.VIEW -d "$ORIGIN/apps/android" >/dev/null
 wait_text 'Pulse for Android' 60
 shot 3-back-1-second-page
 adb shell input keyevent KEYCODE_BACK
