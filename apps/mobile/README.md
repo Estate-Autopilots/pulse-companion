@@ -14,3 +14,5 @@ form (default `Username`). This builds and accepts Android only, retains the pac
 publishes a host-specific pre-release and `android-<host>-entry.json` on `companion-phone`. Its tag appends
 the first eight hex characters of SHA-256(origin) to the commit suffix. It does not move update channels or EA
 download entries. A supplied origin takes precedence over `promote`; iPhone builds stay on the default origin.
+Android's updater offers and downloads only release tags for its own origin: exactly seven commit hex characters
+for EA's default build, or seven commit characters plus that origin's exact eight-character hash suffix.

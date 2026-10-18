@@ -13,8 +13,11 @@ import java.io.File;
 import java.io.FileOutputStream;
 import java.io.InputStream;
 import java.net.HttpURLConnection;
+import java.net.MalformedURLException;
 import java.net.URL;
+import java.nio.charset.StandardCharsets;
 import java.security.MessageDigest;
+import java.security.NoSuchAlgorithmException;
 import java.util.Arrays;
 import java.util.HashSet;
 import java.util.Set;
@@ -32,9 +35,27 @@ final class Updater {
 
     static final String MANIFEST = MainActivity.ORIGIN + "/api/app-updates/test/latest.json";
     private static final Pattern NAME = Pattern.compile("^Pulse-(\\d+)\\.(\\d+)\\.(\\d+)-android\\.apk$");
-    private static final Pattern RELEASE = Pattern.compile("^/Estate-Autopilots/pulse-companion/releases/download/companion-v\\d+\\.\\d+\\.\\d+-[a-f0-9]+/[A-Za-z0-9_.-]+\\.apk$");
+    private static final Pattern RELEASE = Pattern.compile("^/Estate-Autopilots/pulse-companion/releases/download/companion-v\\d+\\.\\d+\\.\\d+-[a-f0-9]{7}" + releaseSuffix() + "/[A-Za-z0-9_.-]+\\.apk$");
 
     private Updater() {}
+
+    private static String releaseSuffix() {
+        if ("https://pulse.estateautopilots.com".equals(MainActivity.ORIGIN)) return "";
+        try {
+            return hex(MessageDigest.getInstance("SHA-256").digest(MainActivity.ORIGIN.getBytes(StandardCharsets.UTF_8))).substring(0, 8);
+        } catch (NoSuchAlgorithmException e) {
+            throw new ExceptionInInitializerError(e);
+        }
+    }
+
+    private static boolean trustedRelease(String value) {
+        try {
+            URL url = new URL(value);
+            return "https".equals(url.getProtocol()) && "github.com".equals(url.getHost()) && RELEASE.matcher(url.getPath()).matches();
+        } catch (MalformedURLException e) {
+            return false;
+        }
+    }
 
     static long codeOf(String version) {
         String[] p = version.split("\\.");
@@ -60,7 +81,7 @@ final class Updater {
             out.put("sha256", f.getString("sha256"));
             out.put("size", f.getLong("size"));
             out.put("notes", manifest.optString("notes", ""));
-            out.put("available", code > Shell.code());
+            out.put("available", code > Shell.code() && trustedRelease(f.getString("url")));
             return out;
         }
         return null;
@@ -83,8 +104,8 @@ final class Updater {
     /** Download and verify; returns the ready file's name. */
     @SuppressWarnings("deprecation")
     static String download(Context context, String url, String sha256, long size) throws Exception {
+        if (!trustedRelease(url)) throw new SecurityException("Untrusted update download");
         URL initial = new URL(url);
-        if (!"https".equals(initial.getProtocol()) || !"github.com".equals(initial.getHost()) || !RELEASE.matcher(initial.getPath()).matches()) throw new SecurityException("Untrusted update download");
         if (!sha256.matches("[a-f0-9]{64}") || size <= 0 || size > 200_000_000L) throw new SecurityException("Invalid update entry");
         URL next = initial;
         HttpURLConnection connection = null;

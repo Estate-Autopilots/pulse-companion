@@ -116,6 +116,50 @@ test('updates only come from Pulse release downloads and are verified before the
   assert.match(updater, /api\/app-updates\/test\/latest\.json/);
 });
 
+// Evaluate the Android pattern itself, including the suffix selected for this build.
+function androidReleasePattern(origin) {
+  const updater = read('android/app/src/main/java/com/pulse/work/mobile/Updater.java');
+  const expression = updater.match(/Pattern RELEASE = Pattern\.compile\(([^\n]+)\);/)[1];
+  const suffix = origin === DEFAULT_ORIGIN ? '' : createHash('sha256').update(origin).digest('hex').slice(0, 8);
+  return new RegExp(runInNewContext(expression, { releaseSuffix: () => suffix }));
+}
+const androidReleasePath = suffix => `/Estate-Autopilots/pulse-companion/releases/download/companion-v1.2.3-${suffix}/Pulse-1.2.3-android.apk`;
+
+test('default Android builds refuse host-suffixed releases and require exactly seven SHA characters', () => {
+  const pattern = androidReleasePattern(DEFAULT_ORIGIN);
+  assert.ok(pattern.test(androidReleasePath('abcdef0')));
+  const hostSuffix = createHash('sha256').update('https://pulse.example.com').digest('hex').slice(0, 8);
+  for (const suffix of ['abcdef0' + hostSuffix, 'abcdef', 'abcdef01', 'ABCDEF0', 'abcdefg', '']) {
+    assert.ok(!pattern.test(androidReleasePath(suffix)), `default build refuses ${suffix}`);
+  }
+});
+
+test('origin Android builds refuse EA releases, other origins and malformed suffixes', () => {
+  const origins = ['https://pulse.example.com', 'https://another.example.com'];
+  for (const origin of origins) {
+    const pattern = androidReleasePattern(origin);
+    const suffix = createHash('sha256').update(origin).digest('hex').slice(0, 8);
+    const otherSuffix = createHash('sha256').update(origins.find(value => value !== origin)).digest('hex').slice(0, 8);
+    assert.ok(pattern.test(androidReleasePath('abcdef0' + suffix)));
+    for (const value of ['abcdef0', 'abcdef0' + otherSuffix, 'abcdef' + suffix, 'abcdef01' + suffix, 'abcdef0' + suffix + '0']) {
+      assert.ok(!pattern.test(androidReleasePath(value)), `${origin} refuses ${value}`);
+    }
+  }
+});
+
+test('Android availability and download share the origin guard before any download connection', () => {
+  const updater = read('android/app/src/main/java/com/pulse/work/mobile/Updater.java');
+  assert.match(updater, /if \("https:\/\/pulse\.estateautopilots\.com"\.equals\(MainActivity\.ORIGIN\)\) return "";/);
+  assert.match(updater, /hex\(MessageDigest\.getInstance\("SHA-256"\)\.digest\(MainActivity\.ORIGIN\.getBytes\(StandardCharsets\.UTF_8\)\)\)\.substring\(0, 8\)/);
+  assert.match(updater, /out\.put\("available", code > Shell\.code\(\) && trustedRelease\(f\.getString\("url"\)\)\)/);
+  const guard = updater.split('boolean trustedRelease(String value)')[1].split('static long codeOf')[0];
+  assert.match(guard, /"https"\.equals\(url\.getProtocol\(\)\) && "github.com"\.equals\(url\.getHost\(\)\) && RELEASE\.matcher\(url\.getPath\(\)\)\.matches\(\)/);
+  assert.match(guard, /catch \(MalformedURLException e\) \{\s*return false;/);
+  const download = updater.split('static String download(')[1];
+  assert.match(download, /if \(!trustedRelease\(url\)\) throw new SecurityException\("Untrusted update download"\)/);
+  assert.ok(download.indexOf('!trustedRelease(url)') < download.indexOf('next.openConnection()'));
+});
+
 test('the device credential never reaches the page', () => {
   for (const method of ['finishEnrollment', 'info']) {
     const body = java.split(`public void ${method}(PluginCall call)`)[1].split('@PluginMethod')[0];
@@ -153,7 +197,10 @@ test('one origin configures the complete Android shell; omitted input restores t
     assert.match(contents(originFiles[3]), /^package com\.pulse\.work\.mobile;/);
     for (const path of originFiles) assert.doesNotMatch(contents(path), /estateautopilots/i, path);
     for (const file of readdirSync(resolve(dir, 'android/app/src/main/java/com/pulse/work/mobile'))) {
-      assert.doesNotMatch(contents(`android/app/src/main/java/com/pulse/work/mobile/${file}`), /estateautopilots/i, file);
+      const source = contents(`android/app/src/main/java/com/pulse/work/mobile/${file}`);
+      // Only the default-build comparison may name EA; no configured destination may retain it.
+      const destinations = file === 'Updater.java' ? source.replace(`"${DEFAULT_ORIGIN}".equals(MainActivity.ORIGIN)`, 'false') : source;
+      assert.doesNotMatch(destinations, /estateautopilots/i, file);
     }
     const built = JSON.parse(contents('capacitor.config.json'));
     assert.equal(built.server.url, origin);
@@ -217,6 +264,7 @@ test('host releases keep trusted URLs and publish only their own download entry;
       assert.equal(entry.sha256, createHash('sha256').update('synthetic-apk').digest('hex'));
       assert.equal(entry.url, `https://github.com/Estate-Autopilots/pulse-companion/releases/download/${result.tag}/${entry.name}`);
       assert.ok(releaseURL(entry.url)); // Installed app release trust rule accepts the host-suffixed tag.
+      assert.ok(androidReleasePattern(origin || DEFAULT_ORIGIN).test(new URL(entry.url).pathname));
       const calls = readFileSync(join(dir, 'calls.jsonl'), 'utf8').trim().split('\n').map(JSON.parse);
       const upload = calls.find(args => args[1] === 'upload');
       assert.equal(upload[2], 'companion-phone');
