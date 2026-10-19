@@ -58,7 +58,12 @@ PY
   adb shell input tap $xy
 }
 texts() { dump | python3 -c "import re,sys,html; print(' | '.join(html.unescape(t) for t in re.findall(r'text=\"([^\"]+)\"', sys.stdin.read())))"; }
-granted() { adb shell dumpsys package $PKG | grep -m1 "$1: granted" | grep -o 'granted=[a-z]*' | cut -d= -f2; }
+granted() {
+  local state value
+  state=$(adb shell dumpsys package "$PKG") || { echo unknown; return 1; }
+  value=$(printf '%s\n' "$state" | grep -m1 -F "$1: granted=" | grep -o 'granted=[a-z]*' | cut -d= -f2)
+  case "$value" in true|false) echo "$value";; *) echo unknown; return 1;; esac
+}
 journal() { adb shell cat "$JOURNAL" 2>/dev/null | tr -d '\r'; }
 
 # ------------------------------------------------------------------------------------------------- the QA session
@@ -105,6 +110,19 @@ if phase gpsphoto; then
       adb shell pm clear-permission-flags "$PKG" "android.permission.$permission" user-set user-fixed 2>/dev/null || true
     done
   }
+  gps_permissions() {
+    local name=$1 expected=$2 verdict=fail
+    if adb shell dumpsys package "$PKG" > "$OUT/gps-$name-package.txt" && adb shell cmd appops get "$PKG" > "$OUT/gps-$name-appops.txt"; then
+      verdict=$(python3 - "$OUT/gps-$name-package.txt" "$expected" <<'GRANTS'
+import pathlib, re, sys
+text = pathlib.Path(sys.argv[1]).read_text()
+expected = {'ACCESS_COARSE_LOCATION': sys.argv[2], 'ACCESS_FINE_LOCATION': sys.argv[2], 'ACCESS_BACKGROUND_LOCATION': 'false'}
+print('pass' if all(re.search(r'android\.permission\.' + key + r': granted=' + value + r'\b', text) for key, value in expected.items()) else 'fail')
+GRANTS
+)
+    fi
+    result "location_permissions_$name" "$verdict" "foreground=$expected background=false; raw package/appops retained"
+  }
   # Revoke before starting instrumentation: Android kills the app process when a runtime grant is removed.
   reset_location
   adb shell settings put secure location_mode 3
@@ -114,7 +132,8 @@ if phase gpsphoto; then
     step gps-photo >/dev/null
     wait_text 'GPS site photo QA' 20 || result gps_photo_page fail "test page did not load"
     shot gps-01-idle
-    result location_explicit_tap "$( [ "$(granted android.permission.ACCESS_COARSE_LOCATION)" != true ] && echo pass || echo fail)" "no location permission on page load"
+    gps_permissions before-tap false
+    result location_explicit_tap "$( [ "$(granted android.permission.ACCESS_COARSE_LOCATION)" = false ] && echo pass || echo fail)" "no location permission on page load"
     tap_text '^Use location$'
     if wait_text 'access this device.s location' 20; then
       shot gps-02-location-deny-prompt
@@ -154,17 +173,38 @@ except Exception: print('fail')
 GPS
 )
       result location_allow "$fix_ok" "page received the emulator's synthetic GPS fix"
-      result location_foreground_only "$( [ "$(granted android.permission.ACCESS_BACKGROUND_LOCATION)" != true ] && echo pass || echo fail)" "no background location grant"
+      gps_permissions after-allow true
+      result location_foreground_only "$( [ "$(granted android.permission.ACCESS_BACKGROUND_LOCATION)" = false ] && echo pass || echo fail)" "no background location grant"
       shot gps-05-location-fix
     else result location_allow fail "no foreground location prompt"; fi
     # The capture field should open the rear camera; the ordinary image field retains Camera/Photos/Files.
+    step seed-image >/dev/null
     tap_text '^Gallery photo'
-    wait_text 'Camera|Files|Photos|Gallery' 20
+    wait_text 'Camera|Files|Photos|Gallery|Media' 20
     dump > "$OUT/gps-gallery.xml"
-    result gallery_chooser "$( grep -qiE 'Files|Photos|Gallery' "$OUT/gps-gallery.xml" && grep -qi 'Camera' "$OUT/gps-gallery.xml" && echo pass || echo fail)" "camera and existing photo/file source both offered"
+    result gallery_chooser "$( grep -qiE 'Files|Photos|Gallery|Media' "$OUT/gps-gallery.xml" && grep -qi 'Camera' "$OUT/gps-gallery.xml" && echo pass || echo fail)" "camera and existing photo/file source both offered"
     shot gps-06-gallery-chooser
-    adb shell input keyevent KEYCODE_BACK
+    tap_text '^Media$|^Files$|^Photos$|^Gallery$'
+    sleep 3
+    dump > "$OUT/gps-gallery-provider.xml"
+    adb shell dumpsys activity activities > "$OUT/gps-gallery-provider-activity.txt"
+    shot gps-06-gallery-provider
+    tap_text 'pulse-qa-gallery|Photo taken'
     sleep 2
+    tap_text '^Add$|^Done$|^Select$' || true
+    sleep 2
+    step eval --es js "'document.body.dataset.gallery'"
+    printf '%s\n' "$STEP_OUT" > "$OUT/gps-gallery-returned.json"
+    gallery_ok=$(python3 - "$STEP_OUT" <<'GALLERY'
+import json, sys
+try:
+    p = json.loads(json.loads(json.loads(sys.argv[1])['result']))
+    print('pass' if p['size'] > 0 and p['type'] == 'image/jpeg' and p['width'] == 64 and p['height'] == 48 else 'fail')
+except Exception: print('fail')
+GALLERY
+)
+    result gallery_image_returned "$gallery_ok" "the provider returned the seeded 64x48 synthetic JPEG to the ordinary image field"
+    shot gps-06-gallery-returned
     tap_text '^Take site photo'
     # The AOSP camera may show its own first-use information page.
     sleep 3
@@ -204,11 +244,11 @@ if phase permissions; then
   reset_permission() { adb shell pm revoke $PKG android.permission.POST_NOTIFICATIONS 2>/dev/null || true; adb shell pm clear-permission-flags $PKG android.permission.POST_NOTIFICATIONS user-set user-fixed 2>/dev/null || true; }
   reset_permission
   if ask; then shot p1-prompt; adb shell input keyevent KEYCODE_BACK; sleep 2
-    result notification_prompt_later "$( [ "$(granted android.permission.POST_NOTIFICATIONS)" != true ] && echo pass || echo fail)" "dismissed with Back: not granted"
+    result notification_prompt_later "$( [ "$(granted android.permission.POST_NOTIFICATIONS)" = false ] && echo pass || echo fail)" "dismissed with Back: not granted"
     if ask; then result notification_prompt_again_after_later pass "asked again after Later"; else result notification_prompt_again_after_later info "no prompt after Later"; fi
     tap_text "Don.t allow" || adb shell input keyevent KEYCODE_BACK; sleep 2
     adb shell dumpsys notification > "$OUT/notifications-denied.txt"
-    result notification_deny "$( [ "$(granted android.permission.POST_NOTIFICATIONS)" != true ] && ! grep -q "pkg=$PKG" "$OUT/notifications-denied.txt" && echo pass || echo fail)" "Don't allow: no permission, no confirmation"
+    result notification_deny "$( [ "$(granted android.permission.POST_NOTIFICATIONS)" = false ] && ! grep -q "pkg=$PKG" "$OUT/notifications-denied.txt" && echo pass || echo fail)" "Don't allow: no permission, no confirmation"
     if ask; then shot p2-second-prompt; tap_text "Don.t allow" || true; sleep 2; result notification_second_chance info "Android 13+ asks a second time"; else result notification_second_chance info "no second prompt"; fi
     if ask; then result notification_after_two_denials info "still prompted"; else shot p3-no-prompt-after-two-denials; result notification_after_two_denials info "no prompt any more: only Settings can turn notifications on (the page must offer Open settings)"; fi
     reset_permission

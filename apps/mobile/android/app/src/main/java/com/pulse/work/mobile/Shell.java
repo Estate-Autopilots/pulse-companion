@@ -8,8 +8,8 @@ import android.os.Build;
 /** This installation's version, read from the package (no generated BuildConfig needed). */
 final class Shell {
 
-    private static String version = "1.1.3";
-    private static long code = 1001003;
+    private static String version = "1.1.4";
+    private static long code = 1001004;
 
     private Shell() {}
 

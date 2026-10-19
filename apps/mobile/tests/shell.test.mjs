@@ -49,11 +49,11 @@ test('installs over the Expo app: same package, durable key, higher versionCode'
   assert.match(gradle, new RegExp(`def pulseVersion = '${pkg.version.replaceAll('.', '\\.')}'`));
   const [a, b, c] = pkg.version.split('.').map(Number);
   assert.ok(a * 1000000 + b * 1000 + c > PUBLISHED_EXPO_VERSION_CODE);
-  assert.equal(pkg.version, '1.1.3');
+  assert.equal(pkg.version, '1.1.4');
   assert.match(gradle, /storeType "PKCS12"[\s\S]*keyAlias "pulse"/, 'the Expo build used this key store and alias');
   const pbx = read('ios/App/App.xcodeproj/project.pbxproj');
   assert.equal((pbx.match(new RegExp(`MARKETING_VERSION = ${pkg.version.replaceAll('.', '\\.')};`, 'g')) ?? []).length, 2);
-  assert.equal((pbx.match(/CURRENT_PROJECT_VERSION = 1001003;/g) ?? []).length, 2);
+  assert.equal((pbx.match(/CURRENT_PROJECT_VERSION = 1001004;/g) ?? []).length, 2);
 });
 
 test('the Android manifest asks for no tracking and keeps credentials on the phone', () => {
@@ -260,7 +260,7 @@ test('host releases keep trusted URLs and publish only their own download entry;
       const entryName = origin ? `android-${new URL(origin).hostname}-entry.json` : 'android-channel-entry.json';
       const entry = JSON.parse(readFileSync(join(dir, 'release', entryName)));
       assert.equal(entry.origin, origin || undefined);
-      assert.equal(entry.versionCode, 1001003);
+      assert.equal(entry.versionCode, 1001004);
       assert.equal(entry.size, Buffer.byteLength('synthetic-apk'));
       assert.equal(entry.sha256, createHash('sha256').update('synthetic-apk').digest('hex'));
       assert.equal(entry.url, `https://github.com/Estate-Autopilots/pulse-companion/releases/download/${result.tag}/${entry.name}`);

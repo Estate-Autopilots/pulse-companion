@@ -24,3 +24,9 @@ usable. It never grants Pulse location through ADB or enrolls a real person. Evi
 `phone-android-gps-photo-<sha>` (results, screenshots and journals). Dispatch `validation_only=true` with
 `qa_phases=gpsphoto` for a focused Android baseline; no release is published. The publishing job requires this
 check for every address, including custom-origin builds.
+
+Shell 1.1.4 retains the existing system camera intent and Capacitor foreground geolocation handler: no camera
+permission or new plugin is needed. GPS acceptance seeds and selects a synthetic existing image through Android's
+Media provider and archives raw package/appops grants before the tap and after Allow. Native notification acceptance
+waits at most three seconds for posting, distinguishes a missing notification from a missing public copy, and saves
+state for both notification permission choices even on failure.

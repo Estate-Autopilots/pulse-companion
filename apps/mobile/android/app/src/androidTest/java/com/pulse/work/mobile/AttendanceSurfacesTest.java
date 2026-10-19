@@ -98,10 +98,30 @@ public class AttendanceSurfacesTest {
     @Test public void genericLockScreenCopyAndRealNotificationPermissionBoundary() throws Exception {
         fixture("in"); AttendanceSurfaces.chooseRibbon(c, true);
         NotificationManager manager = c.getSystemService(NotificationManager.class);
+        boolean enabled = Notifier.enabled(c);
         android.service.notification.StatusBarNotification found = null;
-        for (android.service.notification.StatusBarNotification n : manager.getActiveNotifications()) if (n.getId() == AttendanceSurfaces.NOTIFICATION) found = n;
-        if (Notifier.enabled(c)) {
-            assertNotNull(found); Notification n = found.getNotification(); assertNotNull(n.publicVersion);
+        long deadline = SystemClock.elapsedRealtime() + 3000;
+        do {
+            found = null;
+            for (android.service.notification.StatusBarNotification n : manager.getActiveNotifications()) if (n.getId() == AttendanceSurfaces.NOTIFICATION) found = n;
+            if (enabled == (found != null)) break;
+            SystemClock.sleep(50);
+        } while (SystemClock.elapsedRealtime() < deadline);
+        org.json.JSONArray active = new org.json.JSONArray();
+        for (android.service.notification.StatusBarNotification row : manager.getActiveNotifications()) {
+            Notification n = row.getNotification();
+            active.put(new JSONObject().put("id", row.getId()).put("publicCopy", n.publicVersion != null)
+                .put("text", n.extras.getString(Notification.EXTRA_TEXT)).put("flags", n.flags));
+        }
+        android.app.NotificationChannel channel = manager.getNotificationChannel(AttendanceSurfaces.CHANNEL);
+        JSONObject state = new JSONObject().put("enabled", enabled).put("ribbon", AttendanceSurfaces.ribbon(c))
+            .put("fresh", AttendanceSurfaces.fresh(c, AttendanceSurfaces.read(c))).put("enrolled", ShellStore.enrolled(c))
+            .put("channelImportance", channel == null ? -1 : channel.getImportance()).put("active", active);
+        try (java.io.FileWriter out = new java.io.FileWriter(new java.io.File(c.getExternalFilesDir(null), "r21-notification-state.json"))) { out.write(state.toString()); }
+        if (enabled) {
+            assertNotNull("Attendance notification not posted within 3s: " + state, found);
+            Notification n = found.getNotification();
+            assertNotNull("Attendance notification lacks its generic public copy: " + state, n.publicVersion);
             assertEquals("Open Workspace", n.publicVersion.extras.getString(Notification.EXTRA_TEXT));
             assertNull(n.publicVersion.actions); assertEquals(0, n.flags & Notification.FLAG_ONGOING_EVENT);
             assertEquals(2, n.actions.length);
