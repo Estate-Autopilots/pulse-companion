@@ -57,7 +57,8 @@ jobs:
     timeout-minutes: 75
     strategy:
       fail-fast: false
-      max-parallel: 15
+      # Leave room under the organisation's 20 concurrent jobs for the merge gate.
+      max-parallel: 6
       matrix:
         api: [29, 31, 33, 34, 35]
         size: [small, phone, tablet]
