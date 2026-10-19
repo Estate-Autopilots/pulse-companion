@@ -16,3 +16,11 @@ the first eight hex characters of SHA-256(origin) to the commit suffix. It does 
 download entries. A supplied origin takes precedence over `promote`; iPhone builds stay on the default origin.
 Android's updater offers and downloads only release tags for its own origin: exactly seven commit hex characters
 for EA's default build, or seven commit characters plus that origin's exact eight-character hash suffix.
+
+The required `android-gps-photo` hosted job uses a synthetic page in the release WebView and the emulator's rear
+camera/GPS. It verifies a decoded camera image reaches the file field, the gallery chooser remains available,
+foreground location allow returns the injected fix, and denial returns permission error 1 while the page remains
+usable. It never grants Pulse location through ADB or enrolls a real person. Evidence is in
+`phone-android-gps-photo-<sha>` (results, screenshots and journals). Dispatch `validation_only=true` with
+`qa_phases=gpsphoto` for a focused Android baseline; no release is published. The publishing job requires this
+check for every address, including custom-origin builds.

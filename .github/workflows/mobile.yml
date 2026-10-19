@@ -27,7 +27,7 @@ on:
         type: string
         default: Username
       qa_phases:
-        description: QA-E2E emulator phases to run instead of each image's own list (e.g. wifi)
+        description: QA-E2E phases (e.g. wifi); gpsphoto with validation_only runs focused Android checks
         type: string
         default: ''
 permissions:
@@ -170,8 +170,47 @@ jobs:
           if-no-files-found: ignore
           retention-days: 30
 
+  android-gps-photo:
+    # Required on every address's APK: the real camera, page geolocation prompt and denial path.
+    needs: [prepare, android]
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/download-artifact@v7
+        with: { name: 'phone-android-${{ github.sha }}', path: apk }
+      - name: Enable KVM
+        run: |
+          echo 'KERNEL=="kvm", GROUP="kvm", MODE="0666", OPTIONS+="static_node=kvm"' | sudo tee /etc/udev/rules.d/99-kvm4all.rules
+          sudo udevadm control --reload-rules && sudo udevadm trigger --name-match=kvm
+      - uses: reactivecircus/android-emulator-runner@v2
+        env:
+          PULSE_SIGNIN_TEXT: ${{ inputs.signin_text || 'Username|Sign in to Pulse' }}
+        with:
+          api-level: 34
+          emulator-build: 14788078
+          profile: pixel_7
+          arch: x86_64
+          target: default
+          cores: 2
+          ram-size: 2048M
+          heap-size: 512M
+          disk-size: 6000M
+          emulator-boot-timeout: 900
+          emulator-options: -no-window -gpu lavapipe -feature -Vulkan -noaudio -no-boot-anim -no-snapshot -camera-back emulated
+          disable-animations: true
+          pre-emulator-launch-script: bash apps/mobile/scripts/log-emulator.sh
+          script: bash apps/mobile/scripts/android-qa.sh "apk/Pulse-${{ needs.prepare.outputs.version }}-android.apk" "apk/Pulse-${{ needs.prepare.outputs.version }}-android-tests.apk" qa-gps-photo gpsphoto
+      - uses: actions/upload-artifact@v7
+        if: always()
+        with:
+          name: phone-android-gps-photo-${{ github.sha }}
+          path: qa-gps-photo/
+          if-no-files-found: error
+          retention-days: 30
+
   android-qa:
-    if: ${{ !inputs.origin }}
+    if: ${{ !inputs.origin && inputs.qa_phases != 'gpsphoto' }}
     # QA-E2E: the shell around a synthetic Pulse on the emulator (apps/mobile/scripts/android-qa.sh; QaSessionTest
     # answers the shell's gateway calls in-process, so no credential reaches a Pulse server). The AOSP image runs the
     # notification prompt and notifications, the widget, lifecycle and the Wi-Fi rule; a Google APIs image runs the
@@ -221,7 +260,7 @@ jobs:
           retention-days: 30
 
   ios:
-    if: ${{ !inputs.origin }}
+    if: ${{ !inputs.origin && !(inputs.validation_only && inputs.qa_phases == 'gpsphoto') }}
     needs: prepare
     runs-on: macos-latest
     timeout-minutes: 60
@@ -280,9 +319,9 @@ jobs:
           retention-days: 30
 
   publish:
-    needs: [prepare, android, android-acceptance, ios]
+    needs: [prepare, android, android-acceptance, android-gps-photo, ios]
     # always() evaluates this job even when the intentional Android-only build skipped iOS.
-    if: ${{ always() && !cancelled() && github.ref == 'refs/heads/main' && !inputs.validation_only && (!inputs.promote || inputs.origin) && needs.prepare.result == 'success' && needs.android.result == 'success' && needs.android-acceptance.result == 'success' && (needs.ios.result == 'success' || (inputs.origin && needs.ios.result == 'skipped')) }}
+    if: ${{ always() && !cancelled() && github.ref == 'refs/heads/main' && !inputs.validation_only && (!inputs.promote || inputs.origin) && needs.prepare.result == 'success' && needs.android.result == 'success' && needs.android-acceptance.result == 'success' && needs.android-gps-photo.result == 'success' && (needs.ios.result == 'success' || (inputs.origin && needs.ios.result == 'skipped')) }}
     runs-on: ubuntu-latest
     permissions: { contents: write, actions: read }
     steps:

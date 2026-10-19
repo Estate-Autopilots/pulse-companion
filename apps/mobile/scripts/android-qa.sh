@@ -9,6 +9,7 @@
 #   widget         the home-screen widget added through the launcher, its states, and what a tap does
 #   lifecycle      cold and warm start, back at every depth, the keyboard over a field, resume after RESUME_MINUTES,
 #                  a file upload and a PDF the page made (bridge download)
+#   gpsphoto       rear-camera photo returned to the page, gallery chooser, foreground GPS allow/deny and usability
 #   wifi           the office Wi-Fi rule: the emulator's network matched by name, a real Wi-Fi join, no permission
 #   geofence       spoofed GPS (adb emu geo fix): approach, dwell, jitter, departure; without background location
 #                  (needs a Google APIs image: Android's geofences come from Play services)
@@ -95,6 +96,107 @@ adb shell wm size 1080x2340; adb shell wm density 480
 timeout 240 "$ADB_BIN" install -r "$APK" >/dev/null && timeout 240 "$ADB_BIN" install -r "$TEST_APK" >/dev/null || { echo "install failed" >&2; exit 1; }
 adb shell pm clear $PKG >/dev/null
 adb shell appops set $PKG REQUEST_INSTALL_PACKAGES deny >/dev/null 2>&1 || true
+
+# ------------------------------------------------------------- GPS site photo: real camera and WebView geolocation
+if phase gpsphoto; then
+  reset_location() {
+    for permission in ACCESS_BACKGROUND_LOCATION ACCESS_FINE_LOCATION ACCESS_COARSE_LOCATION; do
+      adb shell pm revoke "$PKG" "android.permission.$permission" 2>/dev/null || true
+      adb shell pm clear-permission-flags "$PKG" "android.permission.$permission" user-set user-fixed 2>/dev/null || true
+    done
+  }
+  # Revoke before starting instrumentation: Android kills the app process when a runtime grant is removed.
+  reset_location
+  adb shell settings put secure location_mode 3
+  if session gpsphoto; then
+    adb shell am start -W -n "$ACT" >/dev/null
+    wait_text "$SIGNIN" 60 || true
+    step gps-photo >/dev/null
+    wait_text 'GPS site photo QA' 20 || result gps_photo_page fail "test page did not load"
+    shot gps-01-idle
+    result location_explicit_tap "$( [ "$(granted android.permission.ACCESS_COARSE_LOCATION)" != true ] && echo pass || echo fail)" "no location permission on page load"
+    tap_text '^Use location$'
+    if wait_text 'access this device.s location' 20; then
+      shot gps-02-location-deny-prompt
+      tap_text "Don.t allow"
+      wait_text 'Location denied 1' 25
+      step eval --es js "'document.body.dataset.geo'"
+      result location_deny "$( echo "$STEP_OUT" | grep -q 'error.*1' && echo pass || echo fail)" "$STEP_OUT"
+      tap_text '^Continue without location$'
+      wait_text 'Page usable' 10
+      step eval --es js "'document.body.dataset.usable'"
+      result location_deny_usable "$( echo "$STEP_OUT" | grep -q yes && echo pass || echo fail)" "explicit page action after denial"
+      shot gps-03-denied-usable
+    else result location_deny fail "no foreground location prompt"; fi
+    # Clear the page's grant decision and Android's denial flag; no permission is granted by ADB.
+    for permission in ACCESS_FINE_LOCATION ACCESS_COARSE_LOCATION; do
+      adb shell pm clear-permission-flags "$PKG" "android.permission.$permission" user-set user-fixed 2>/dev/null || true
+    done
+    step gps-photo >/dev/null
+    wait_text 'GPS site photo QA' 20
+    tap_text '^Use location$'
+    if wait_text 'access this device.s location' 20; then
+      shot gps-04-location-allow-prompt
+      tap_text 'While using the app|Only this time'
+      for attempt in 1 2 3 4 5; do
+        adb emu geo fix "$HQ_LNG" "$HQ_LAT" >/dev/null
+        sleep 2
+      done
+      wait_text 'Location received' 25
+      step eval --es js "'document.body.dataset.geo'"
+      printf '%s\n' "$STEP_OUT" > "$OUT/gps-fix.json"
+      fix_ok=$(python3 - "$STEP_OUT" <<'GPS'
+import json, sys
+try:
+    p = json.loads(json.loads(json.loads(sys.argv[1])['result']))
+    print('pass' if abs(p['lat'] - 18.5204) < .001 and abs(p['lng'] - 73.8567) < .001 else 'fail')
+except Exception: print('fail')
+GPS
+)
+      result location_allow "$fix_ok" "page received the emulator's synthetic GPS fix"
+      result location_foreground_only "$( [ "$(granted android.permission.ACCESS_BACKGROUND_LOCATION)" != true ] && echo pass || echo fail)" "no background location grant"
+      shot gps-05-location-fix
+    else result location_allow fail "no foreground location prompt"; fi
+    # The capture field should open the rear camera; the ordinary image field retains Camera/Photos/Files.
+    tap_text '^Gallery photo'
+    wait_text 'Camera|Files|Photos|Gallery' 20
+    dump > "$OUT/gps-gallery.xml"
+    result gallery_chooser "$( grep -qiE 'Files|Photos|Gallery' "$OUT/gps-gallery.xml" && grep -qi 'Camera' "$OUT/gps-gallery.xml" && echo pass || echo fail)" "camera and existing photo/file source both offered"
+    shot gps-06-gallery-chooser
+    adb shell input keyevent KEYCODE_BACK
+    sleep 2
+    tap_text '^Take site photo'
+    # The AOSP camera may show its own first-use information page.
+    sleep 3
+    tap_text 'No thanks|Not now' || true
+    if wait_text 'Next|Shutter|Take photo|Capture|Done' 20; then
+      tap_text '^Next$' || true
+      sleep 2
+      shot gps-07-rear-camera
+      dump > "$OUT/gps-camera.xml"
+      adb shell dumpsys activity activities > "$OUT/gps-camera-activity.txt"
+      result rear_camera_open "$( grep -qiE 'com.android.camera|com.google.android.GoogleCamera' "$OUT/gps-camera-activity.txt" && echo pass || echo fail)" "system camera activity from capture=environment"
+      tap_text 'Shutter|Take photo|Capture' || adb shell input keyevent KEYCODE_CAMERA
+      sleep 4
+      shot gps-08-captured
+      tap_text '^Done$|^OK$|^Accept$|Review done' || true
+      sleep 4
+      step eval --es js "'document.body.dataset.photo'"
+      printf '%s\n' "$STEP_OUT" > "$OUT/gps-photo.json"
+      photo_ok=$(python3 - "$STEP_OUT" <<'PHOTO'
+import json, sys
+try:
+    p = json.loads(json.loads(json.loads(sys.argv[1])['result']))
+    print('pass' if p['size'] > 0 and p['type'].startswith('image/') and p['width'] > 0 and p['height'] > 0 else 'fail')
+except Exception: print('fail')
+PHOTO
+)
+      result camera_photo_returned "$photo_ok" "the page decoded a nonempty image from the system camera"
+      shot gps-09-photo-returned
+    else result camera_photo_returned fail "camera did not open"; fi
+    end_session gpsphoto
+  fi
+fi
 
 # ---------------------------------------------------------------------------- 1. the notification permission prompt
 if phase permissions; then

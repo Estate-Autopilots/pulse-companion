@@ -6,14 +6,15 @@ import { createHash } from 'node:crypto';
 import { execFileSync } from 'node:child_process';
 import { copyFile, mkdir, readdir, readFile, writeFile } from 'node:fs/promises';
 import { basename, join } from 'node:path';
-import { validateOrigin } from './configure-origin.mjs';
+import { validateOrigin, DEFAULT_ORIGIN } from './configure-origin.mjs';
 
 const repo = 'Estate-Autopilots/pulse-companion';
 const gh = (...args) => execFileSync('gh', args, { encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'] });
 const version = process.env.RELEASE_VERSION, commit = process.env.GITHUB_SHA, runId = process.env.GITHUB_RUN_ID;
 if (!/^\d+\.\d+\.\d+$/.test(version ?? '') || !/^[a-f0-9]{40}$/.test(commit ?? '') || !/^\d+$/.test(runId ?? '')) throw Error('Missing release provenance');
 if (process.env.GITHUB_REF !== 'refs/heads/main' || process.env.GITHUB_REPOSITORY !== repo) throw Error('Only reviewed public main publishes');
-const origin = process.env.PULSE_ORIGIN ? validateOrigin(process.env.PULSE_ORIGIN) : '';
+const configuredOrigin = validateOrigin(process.env.PULSE_ORIGIN);
+const origin = configuredOrigin === DEFAULT_ORIGIN ? '' : configuredOrigin;
 const host = origin ? new URL(origin).hostname : '';
 const suffix = origin ? createHash('sha256').update(origin).digest('hex').slice(0, 8) : '';
 const tag = `companion-v${version}-${commit.slice(0, 7)}${suffix}`, base = `https://github.com/${repo}/releases/download/${tag}/`;

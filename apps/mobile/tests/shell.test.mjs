@@ -239,7 +239,8 @@ test('origin rejects ambiguous URLs before changing files', () => {
 
 test('host releases keep trusted URLs and publish only their own download entry; default publication is unchanged', () => {
   const tags = [];
-  for (const origin of ['', 'https://pulse.example.com', 'https://another.example.com']) {
+  for (const suppliedOrigin of ['', DEFAULT_ORIGIN, 'https://pulse.example.com', 'https://another.example.com']) {
+    const origin = suppliedOrigin === DEFAULT_ORIGIN ? '' : suppliedOrigin;
     const dir = scratch();
     try {
       mkdirSync(join(dir, 'artifacts'));
@@ -251,7 +252,7 @@ test('host releases keep trusted URLs and publish only their own download entry;
       const result = JSON.parse(execFileSync(process.execPath, [resolve(app, 'scripts/publish-prerelease.mjs')], {
         cwd: dir, encoding: 'utf8', env: { ...process.env, PATH: join(dir, 'bin') + ':' + process.env.PATH,
           RELEASE_VERSION: pkg.version, GITHUB_SHA: sha, GITHUB_RUN_ID: '123', GITHUB_REF: 'refs/heads/main',
-          GITHUB_REPOSITORY: 'Estate-Autopilots/pulse-companion', PULSE_ORIGIN: origin },
+          GITHUB_REPOSITORY: 'Estate-Autopilots/pulse-companion', PULSE_ORIGIN: suppliedOrigin },
       }));
       const suffix = origin ? createHash('sha256').update(origin).digest('hex').slice(0, 8) : '';
       assert.equal(result.tag, `companion-v${pkg.version}-${sha.slice(0, 7)}${suffix}`);
@@ -277,5 +278,6 @@ test('host releases keep trusted URLs and publish only their own download entry;
       }
     } finally { rmSync(dir, { recursive: true, force: true }); }
   }
-  assert.equal(new Set(tags).size, tags.length);
+  assert.equal(tags[0], tags[1], 'explicit and implicit default origins publish the same tag');
+  assert.equal(new Set(tags).size, tags.length - 1);
 });
