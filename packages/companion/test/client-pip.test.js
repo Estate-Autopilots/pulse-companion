@@ -157,7 +157,7 @@ test('Pip without a stylesheet (phone app and Android widget) carries every colo
     assert.match(svg, /stop-color="#/);
     assert.ok(svg.length < 3500);
   }
-  assert.match(pipStaticSvg({ blink: true }), /M42 54q5.5 5 11 0/);
+  assert.match(pipStaticSvg({ blink: true }), /M45.4 66q4.4 4.5 8.8 0/);
 });
 
 test('a remembered device without an access credential rotates before its first call', async () => {

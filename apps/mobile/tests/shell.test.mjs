@@ -9,7 +9,7 @@ import { runInNewContext } from 'node:vm';
 import { dirname, resolve, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { configureOrigin, validateOrigin, DEFAULT_ORIGIN } from '../scripts/configure-origin.mjs';
-import { releaseURL } from '../../../packages/companion/src/updates.js';
+import { parseManifest, releaseURL } from '../../../packages/companion/src/updates.js';
 
 const app = resolve(dirname(fileURLToPath(import.meta.url)), '..');
 const repo = resolve(app, '../..');
@@ -325,4 +325,98 @@ test('host releases keep trusted URLs and publish only their own download entry;
   }
   assert.equal(tags[0], tags[1], 'explicit and implicit default origins publish the same tag');
   assert.equal(new Set(tags).size, tags.length - 1);
+});
+
+test('each address promotes only its own release into its own manifest; EA latest.json and desktops stay unchanged', () => {
+  const sha = 'b'.repeat(40), apk = 'Pulse-1.1.4-android.apk', bytes = 'synthetic-apk', wl = 'https://pulse.example.com', other = 'https://another.example.com';
+  const download = 'https://github.com/Estate-Autopilots/pulse-companion/releases/download/';
+  const release = (origin, change = {}) => {
+    const suffix = origin ? createHash('sha256').update(origin).digest('hex').slice(0, 8) : '';
+    const tag = `companion-v1.1.4-${sha.slice(0, 7)}${suffix}`;
+    const entryName = origin ? `android-${new URL(origin).hostname}-entry.json` : 'android-channel-entry.json';
+    const entry = { name: apk, platform: 'android', kind: 'apk', size: Buffer.byteLength(bytes), sha256: createHash('sha256').update(bytes).digest('hex'),
+      url: `${download}${tag}/${apk}`, versionCode: 1001004, ...(origin ? { origin } : {}), ...change.entry };
+    return { tag, entry, assets: { [entryName]: JSON.stringify(entry), [apk]: change.apk ?? bytes },
+      view: { targetCommitish: change.commit ?? sha, createdAt: '2026-10-20T05:00:00Z', body: 'Pulse for Android 1.1.4\n\nBuild: https://github.com/Estate-Autopilots/pulse-companion/actions/runs/456\n' } };
+  };
+  const desktop = JSON.stringify({ version: '1.0.2', channel: 'test', notes: 'Desktop', platforms: {}, files: [] });
+  const shared = { version: '1.1.3', channel: 'test', notes: 'Earlier', commit: '8aec1499fd6ac2704e8154bf3cd9f23dfcdfd162', runId: '37909906067', builtAt: '2026-10-09T09:47:11.355Z', platforms: {},
+    files: [{ platform: 'windows', name: 'Pulse-1.0.0-windows.msi', size: 1, sha256: 'c'.repeat(64), url: `${download}companion-v1.0.0-8aec149/Pulse-1.0.0-windows.msi` },
+      { platform: 'android', name: 'Pulse-1.1.3-android.apk', size: 1, sha256: 'd'.repeat(64), url: `${download}companion-v1.1.3-9a58d81/Pulse-1.1.3-android.apk` }] };
+  // A fake gh over a synthetic public repository: release assets by tag, `release view` JSON, and recorded uploads.
+  const gh = `#!/usr/bin/env node
+const fs = require('node:fs'), path = require('node:path'), args = process.argv.slice(2), opt = n => args[args.indexOf(n) + 1];
+fs.appendFileSync('calls.jsonl', JSON.stringify(args) + '\\n');
+const release = JSON.parse(fs.readFileSync('remote.json', 'utf8'))[args[2]];
+if (!release) process.exit(1);
+if (args[1] === 'view') process.stdout.write(JSON.stringify(release.view));
+else if (args[1] === 'upload') fs.copyFileSync(args[3], 'uploaded-' + path.basename(args[3]));
+else {
+  const patterns = args.flatMap((a, i) => a === '-p' ? [args[i + 1]] : []);
+  const found = Object.keys(release.assets).filter(n => patterns.some(p => p.startsWith('*') ? n.endsWith(p.slice(1)) : n === p));
+  if (!found.length) process.exit(1);
+  if (opt('-O') === '-') process.stdout.write(release.assets[found[0]]);
+  else for (const n of found) fs.writeFileSync(path.join(opt('-D'), n), release.assets[n]);
+}
+`;
+  const promote = (origin, chosen, replaced) => {
+    const dir = scratch();
+    mkdirSync(join(dir, 'bin'));
+    writeFileSync(join(dir, 'bin/gh'), gh, { mode: 0o755 });
+    const remote = { 'companion-test': { assets: { 'latest.json': JSON.stringify(shared), 'latest-desktop.json': desktop } } };
+    for (const r of [release(''), release(wl), release(other), ...(replaced ? [replaced] : [])]) remote[r.tag] = { assets: r.assets, view: r.view };
+    writeFileSync(join(dir, 'remote.json'), JSON.stringify(remote));
+    try {
+      const out = execFileSync(process.execPath, [resolve(app, 'scripts/promote-android.mjs')], { cwd: dir, encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'],
+        env: { ...process.env, PATH: join(dir, 'bin') + ':' + process.env.PATH, TMPDIR: dir, GITHUB_REF: 'refs/heads/main',
+          GITHUB_REPOSITORY: 'Estate-Autopilots/pulse-companion', PULSE_ORIGIN: origin, PROMOTE_TAG: chosen } });
+      const uploads = readdirSync(dir).filter(n => n.startsWith('uploaded-'));
+      const files = Object.fromEntries(uploads.map(n => [n.slice('uploaded-'.length), JSON.parse(readFileSync(join(dir, n), 'utf8'))]));
+      return { result: JSON.parse(out), uploads, read: n => files[n],
+        calls: readFileSync(join(dir, 'calls.jsonl'), 'utf8').trim().split('\n').map(JSON.parse) };
+    } catch (error) {
+      assert.deepEqual(readdirSync(dir).filter(n => n.startsWith('uploaded-')), [], 'a refused promote uploads nothing');
+      throw error;
+    } finally { rmSync(dir, { recursive: true, force: true }); }
+  };
+
+  for (const origin of ['', DEFAULT_ORIGIN]) {
+    const { uploads, read: uploaded, calls } = promote(origin, release('').tag);
+    assert.deepEqual(uploads, ['uploaded-latest.json'], 'EA promotes only the shared phone manifest');
+    const manifest = uploaded('latest.json');
+    assert.equal(manifest.version, '1.1.4');
+    assert.deepEqual(manifest.files.filter(f => f.platform !== 'android'), shared.files.filter(f => f.platform !== 'android'), 'desktop files unchanged');
+    assert.deepEqual(manifest.files.filter(f => f.platform === 'android'), [release('').entry]);
+    assert.doesNotMatch(calls.flat().join(' '), /example\.com/, 'EA never touches another address\'s files');
+  }
+
+  const { result, uploads, read: uploaded, calls } = promote(wl, release(wl).tag);
+  const name = 'latest-pulse.example.com.json';
+  assert.deepEqual(uploads, [`uploaded-${name}`], 'another address writes only its own manifest');
+  assert.equal(result.manifest, name);
+  for (const args of calls.filter(a => a[2] === 'companion-test')) assert.equal(args[1], 'upload', 'EA latest.json and latest-desktop.json are never read');
+  const own = uploaded(name);
+  assert.ok(parseManifest(own, 'test'));
+  assert.deepEqual(own.files, [release(wl).entry]);
+  assert.deepEqual(own.platforms, {});
+  assert.deepEqual([own.version, own.commit, own.runId, own.builtAt], ['1.1.4', sha, '456', '2026-10-20T05:00:00Z']);
+  // The installed apps' own guard: this address's build accepts the promoted APK, EA's and another address's refuse it.
+  const path = new URL(own.files[0].url).pathname;
+  assert.ok(androidReleasePattern(wl).test(path));
+  assert.ok(!androidReleasePattern(DEFAULT_ORIGIN).test(path));
+  assert.ok(!androidReleasePattern(other).test(path));
+
+  const refusals = [
+    ['EA tag on another address', /built for https:\/\/pulse\.example\.com/, wl, release('').tag],
+    ['another address on EA', /built for https:\/\/pulse\.estateautopilots\.com/, '', release(wl).tag],
+    ['a third address', /built for https:\/\/another\.example\.com/, other, release(wl).tag],
+    ['entry without its address', /built for another address/, wl, release(wl).tag, release(wl, { entry: { origin: undefined } })],
+    ['EA entry naming an address', /built for another address/, '', release('').tag, release('', { entry: { origin: wl } })],
+    ['entry for another address', /built for another address/, wl, release(wl).tag, release(wl, { entry: { origin: other } })],
+    ['commit not matching the tag', /Missing release provenance/, wl, release(wl).tag, release(wl, { commit: 'e'.repeat(40) })],
+    ['APK not matching its entry', /does not match its channel entry/, wl, release(wl).tag, release(wl, { apk: 'tampered' })],
+    ['an invalid address', /origin must be/, 'http://pulse.example.com', release(wl).tag],
+  ];
+  // The script itself refuses (exit 1 with the reason), not this test's own upload check.
+  for (const [label, reason, origin, chosen, replaced] of refusals) assert.throws(() => promote(origin, chosen, replaced), { status: 1, stderr: reason }, label);
 });

@@ -19,7 +19,7 @@ on:
         type: boolean
         default: false
       promote:
-        description: After the go-ahead only — a published phone release tag (companion-vX.Y.Z-sha) to offer on the test channel
+        description: After the go-ahead only — a published phone release tag (companion-vX.Y.Z-sha) to offer on the test channel; with origin, that address's own release, offered only to its installs (builds nothing)
         type: string
         default: ''
       signin_text:
@@ -34,13 +34,13 @@ permissions:
   contents: read
   actions: read
 concurrency:
-  group: ${{ inputs.promote && !inputs.origin && 'phone-promote' || format('phone-{0}-{1}', github.ref, inputs.origin) }}
+  group: ${{ inputs.promote && 'phone-promote' || format('phone-{0}-{1}', github.ref, inputs.origin) }}
   cancel-in-progress: false
 env:
   PULSE_ORIGIN: ${{ inputs.origin || '' }}
 jobs:
   prepare:
-    if: ${{ !inputs.promote || inputs.origin }}
+    if: ${{ !inputs.promote }}
     runs-on: ubuntu-latest
     outputs:
       version: ${{ steps.version.outputs.version }}
@@ -321,7 +321,7 @@ jobs:
   publish:
     needs: [prepare, android, android-acceptance, android-gps-photo, ios]
     # always() evaluates this job even when the intentional Android-only build skipped iOS.
-    if: ${{ always() && !cancelled() && github.ref == 'refs/heads/main' && !inputs.validation_only && (!inputs.promote || inputs.origin) && needs.prepare.result == 'success' && needs.android.result == 'success' && needs.android-acceptance.result == 'success' && needs.android-gps-photo.result == 'success' && (needs.ios.result == 'success' || (inputs.origin && needs.ios.result == 'skipped')) }}
+    if: ${{ always() && !cancelled() && github.ref == 'refs/heads/main' && !inputs.validation_only && !inputs.promote && needs.prepare.result == 'success' && needs.android.result == 'success' && needs.android-acceptance.result == 'success' && needs.android-gps-photo.result == 'success' && (needs.ios.result == 'success' || (inputs.origin && needs.ios.result == 'skipped')) }}
     runs-on: ubuntu-latest
     permissions: { contents: write, actions: read }
     steps:
@@ -337,7 +337,8 @@ jobs:
         run: node apps/mobile/scripts/publish-prerelease.mjs
 
   promote:
-    if: ${{ !inputs.origin && inputs.promote != '' && github.ref == 'refs/heads/main' }}
+    # With origin, promote-android.mjs writes only that address's latest-<host>.json; latest.json stays EA's.
+    if: ${{ inputs.promote != '' && github.ref == 'refs/heads/main' }}
     runs-on: ubuntu-latest
     permissions: { contents: write, actions: read }
     steps:
