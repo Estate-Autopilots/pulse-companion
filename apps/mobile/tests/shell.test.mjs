@@ -49,11 +49,11 @@ test('installs over the Expo app: same package, durable key, higher versionCode'
   assert.match(gradle, new RegExp(`def pulseVersion = '${pkg.version.replaceAll('.', '\\.')}'`));
   const [a, b, c] = pkg.version.split('.').map(Number);
   assert.ok(a * 1000000 + b * 1000 + c > PUBLISHED_EXPO_VERSION_CODE);
-  assert.equal(pkg.version, '1.1.3');
+  assert.equal(pkg.version, '1.1.4');
   assert.match(gradle, /storeType "PKCS12"[\s\S]*keyAlias "pulse"/, 'the Expo build used this key store and alias');
   const pbx = read('ios/App/App.xcodeproj/project.pbxproj');
   assert.equal((pbx.match(new RegExp(`MARKETING_VERSION = ${pkg.version.replaceAll('.', '\\.')};`, 'g')) ?? []).length, 2);
-  assert.equal((pbx.match(/CURRENT_PROJECT_VERSION = 1001003;/g) ?? []).length, 2);
+  assert.equal((pbx.match(/CURRENT_PROJECT_VERSION = 1001004;/g) ?? []).length, 2);
 });
 
 test('the Android manifest asks for no tracking and keeps credentials on the phone', () => {
@@ -169,6 +169,44 @@ test('the device credential never reaches the page', () => {
   assert.match(swift, /kSecAttrAccessibleAfterFirstUnlockThisDeviceOnly/);
 });
 
+test('a file the page made saves without the page bridge, and a failure is said (EST-1742)', async () => {
+  const downloads = read('android/app/src/main/java/com/pulse/work/mobile/ShellDownloads.java');
+  const data = downloads.split('if ("data".equals(scheme))')[1].split('if ("blob".equals(scheme))')[0];
+  assert.doesNotMatch(data, /Capacitor\.Plugins|PulseShell/);
+  // 50 MB in either encoding: a Base64 length guard before decoding, the exact byte count after it.
+  const save = downloads.split('private void saveData(')[1].split('static void failed(')[0];
+  assert.match(save, /body\.length\(\) > \(MAX \+ 2\) \/ 3 \* 4\) throw[\s\S]*Base64\.decode\(body, Base64\.DEFAULT\) : body\.getBytes\(StandardCharsets\.UTF_8\);\s*if \(bytes\.length > MAX\) throw[\s\S]*catch \(Exception e\) \{\s*failed\(activity,/);
+  assert.equal((50 * 1024 * 1024 + 2 - (50 * 1024 * 1024 + 2) % 3) / 3 * 4, Buffer.alloc(50 * 1024 * 1024).toString('base64').length);
+  assert.doesNotMatch(downloads, /catch\(e\)\{\}/);
+  assert.match(java.split('public void saveFile(PluginCall call)')[1].split('String name')[0], /call\.getBoolean\("failed", false\)[\s\S]*ShellDownloads\.failed\(getActivity\(\)/);
+  // The blob script the shell injects, evaluated from its Java expression: every failure ends in saveFile({failed}).
+  const blob = downloads.split('if ("blob".equals(scheme))')[1].split('return;')[0];
+  const expr = blob.split('web.evaluateJavascript(')[1].split(',\n                ok ->')[0];
+  const linkExpr = downloads.match(/String link = (.*);\n/)[1];
+  const url = 'blob:https://pulse.example.com/1', name = 'Pulse file.pdf', mimetype = 'application/pdf', quote = JSON.stringify;
+  const link = runInNewContext(linkExpr, { quote, url });
+  const script = runInNewContext(expr, { quote, url, name, mimetype, link });
+  const run = async ({ bridge = true, fetchFails = false, readFails = false, saveFails = false } = {}) => {
+    const calls = [];
+    const PulseShell = { saveFile: o => { calls.push(o); return !o.failed && saveFails ? Promise.reject(new Error('disk')) : Promise.resolve(); } };
+    const Capacitor = bridge ? { Plugins: { PulseShell } } : undefined;
+    class FileReader { readAsDataURL() { setTimeout(() => readFails ? this.onerror() : (this.result = 'data:application/pdf;base64,QUJD', this.onload())); } }
+    const fetch = async () => { if (fetchFails) throw new TypeError('revoked'); return { blob: async () => ({ type: 'application/pdf' }) }; };
+    const answer = runInNewContext(script, { window: { Capacitor }, Capacitor, FileReader, fetch, setTimeout, console: { error() {} },
+      document: { querySelectorAll: () => [] } });
+    await new Promise(done => setTimeout(done, 20));
+    return JSON.parse(JSON.stringify({ answer, calls }));
+  };
+  assert.deepEqual(await run({ bridge: false }), { answer: false, calls: [] });
+  assert.deepEqual((await run()).calls, [{ name, mime: 'application/pdf', base64: 'QUJD' }]);
+  for (const failure of [{ fetchFails: true }, { readFails: true }]) assert.deepEqual((await run(failure)).calls, [{ failed: true }], JSON.stringify(failure));
+  assert.deepEqual((await run({ saveFails: true })).calls.at(-1), { failed: true });
+  // The emulator harness: Android asks for notifications only from 13 (API 33) on.
+  const qa = read('scripts/android-qa.sh');
+  assert.match(qa, /if phase permissions && \(\( SDK < 33 \)\); then[\s\S]*result notification_prompt pass[\s\S]*elif phase permissions; then/);
+  assert.match(qa, /if \(\( SDK < 33 \)\); then result notifications_on_by_default/);
+});
+
 test('no Expo or React Native code remains', () => {
   assert.ok(!Object.keys({ ...pkg.dependencies, ...pkg.devDependencies }).some(d => /^(expo|react-native|@expo\/|react$)/.test(d)));
   assert.equal(createHash('sha256').update(PULSE_SIGNING_SHA256).digest('hex').length, 64);
@@ -239,19 +277,20 @@ test('origin rejects ambiguous URLs before changing files', () => {
 
 test('host releases keep trusted URLs and publish only their own download entry; default publication is unchanged', () => {
   const tags = [];
-  for (const origin of ['', 'https://pulse.example.com', 'https://another.example.com']) {
+  for (const suppliedOrigin of ['', DEFAULT_ORIGIN, 'https://pulse.example.com', 'https://another.example.com']) {
+    const origin = suppliedOrigin === DEFAULT_ORIGIN ? '' : suppliedOrigin;
     const dir = scratch();
     try {
       mkdirSync(join(dir, 'artifacts'));
       mkdirSync(join(dir, 'bin'));
       writeFileSync(join(dir, 'artifacts', `Pulse-${pkg.version}-android.apk`), 'synthetic-apk');
       if (!origin) writeFileSync(join(dir, 'artifacts', `Pulse-${pkg.version}-ios-simulator.zip`), 'synthetic-ios');
-      writeFileSync(join(dir, 'bin/gh'), `#!/usr/bin/env node\nrequire('node:fs').appendFileSync('calls.jsonl', JSON.stringify(process.argv.slice(2))+'\\n');\n`, { mode: 0o755 });
+      writeFileSync(join(dir, 'bin/gh'), `#!/usr/bin/env node\nrequire('node:fs').appendFileSync('calls.jsonl', JSON.stringify(process.argv.slice(2))+'\\n');\nif (process.argv[3] === 'view') process.exit(1);\n`, { mode: 0o755 });
       const sha = 'a'.repeat(40);
       const result = JSON.parse(execFileSync(process.execPath, [resolve(app, 'scripts/publish-prerelease.mjs')], {
         cwd: dir, encoding: 'utf8', env: { ...process.env, PATH: join(dir, 'bin') + ':' + process.env.PATH,
           RELEASE_VERSION: pkg.version, GITHUB_SHA: sha, GITHUB_RUN_ID: '123', GITHUB_REF: 'refs/heads/main',
-          GITHUB_REPOSITORY: 'Estate-Autopilots/pulse-companion', PULSE_ORIGIN: origin },
+          GITHUB_REPOSITORY: 'Estate-Autopilots/pulse-companion', PULSE_ORIGIN: suppliedOrigin },
       }));
       const suffix = origin ? createHash('sha256').update(origin).digest('hex').slice(0, 8) : '';
       assert.equal(result.tag, `companion-v${pkg.version}-${sha.slice(0, 7)}${suffix}`);
@@ -259,23 +298,31 @@ test('host releases keep trusted URLs and publish only their own download entry;
       const entryName = origin ? `android-${new URL(origin).hostname}-entry.json` : 'android-channel-entry.json';
       const entry = JSON.parse(readFileSync(join(dir, 'release', entryName)));
       assert.equal(entry.origin, origin || undefined);
-      assert.equal(entry.versionCode, 1001003);
+      assert.equal(entry.versionCode, 1001004);
       assert.equal(entry.size, Buffer.byteLength('synthetic-apk'));
       assert.equal(entry.sha256, createHash('sha256').update('synthetic-apk').digest('hex'));
       assert.equal(entry.url, `https://github.com/Estate-Autopilots/pulse-companion/releases/download/${result.tag}/${entry.name}`);
       assert.ok(releaseURL(entry.url)); // Installed app release trust rule accepts the host-suffixed tag.
       assert.ok(androidReleasePattern(origin || DEFAULT_ORIGIN).test(new URL(entry.url).pathname));
       const calls = readFileSync(join(dir, 'calls.jsonl'), 'utf8').trim().split('\n').map(JSON.parse);
+      const versioned = calls.find(args => args[1] === 'create' && args[2] === result.tag);
+      assert.equal(versioned[versioned.indexOf('--title') + 1], `Pulse for Android ${pkg.version} (${origin ? new URL(origin).hostname : 'phone app'})`);
+      assert.ok(!versioned.includes('--prerelease'));
+      assert.equal(versioned.includes('--latest=false'), Boolean(origin), 'tenant builds must never become Latest');
+      const pointer = calls.find(args => args[1] === 'create' && args[2] === 'companion-phone');
+      assert.ok(pointer.includes('--prerelease'), 'the download pointer stays a prerelease');
+      assert.doesNotMatch(readFileSync(join(dir, 'release-notes.md'), 'utf8'), /pre-release/);
       const upload = calls.find(args => args[1] === 'upload');
       assert.equal(upload[2], 'companion-phone');
+      assert.ok(upload.includes('--clobber'));
       assert.deepEqual(upload.slice(3, -3), [`release/${entryName}`, ...(!origin ? ['release/ios-simulator-entry.json'] : [])]);
       assert.ok(!calls.flat().includes('companion-test'));
       if (origin) {
         assert.doesNotMatch(calls.flat().join(' '), /android-channel-entry|ios-simulator-entry/);
-        assert.ok(calls.find(args => args[1] === 'create').includes(`Pulse for Android ${pkg.version} (${new URL(origin).hostname}, pre-release)`));
         assert.ok(!existsSync(join(dir, 'release/ios-simulator-entry.json')));
       }
     } finally { rmSync(dir, { recursive: true, force: true }); }
   }
-  assert.equal(new Set(tags).size, tags.length);
+  assert.equal(tags[0], tags[1], 'explicit and implicit default origins publish the same tag');
+  assert.equal(new Set(tags).size, tags.length - 1);
 });

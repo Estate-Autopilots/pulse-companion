@@ -476,6 +476,12 @@ public class PulseShellPlugin extends Plugin {
     /** A file the page generated itself (an export): keep it privately and open or share it. */
     @PluginMethod
     public void saveFile(PluginCall call) {
+        if (call.getBoolean("failed", false)) {
+            // EST-1742: a page-made blob: download that failed in the page (ShellDownloads) is said, not swallowed.
+            ShellDownloads.failed(getActivity(), "page file: blob not saved");
+            call.reject("Pulse could not save the file.", "save");
+            return;
+        }
         String name = call.getString("name", "Pulse download");
         String mime = call.getString("mime", "application/octet-stream");
         String data = call.getString("base64", "");

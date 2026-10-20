@@ -1,4 +1,4 @@
-// Publishes the phone app as a public pre-release after every hosted build and acceptance job passed.
+// Publishes the phone app as a public release after every hosted build and acceptance job passed.
 // It never touches an update channel: the test channel's Android entry moves only through promote-android.mjs,
 // after the owner's go-ahead. The tag keeps the companion-vX.Y.Z-sha form because installed Expo 1.0.0 apps trust
 // only that release-URL shape when they later update to this app.
@@ -6,14 +6,15 @@ import { createHash } from 'node:crypto';
 import { execFileSync } from 'node:child_process';
 import { copyFile, mkdir, readdir, readFile, writeFile } from 'node:fs/promises';
 import { basename, join } from 'node:path';
-import { validateOrigin } from './configure-origin.mjs';
+import { validateOrigin, DEFAULT_ORIGIN } from './configure-origin.mjs';
 
 const repo = 'Estate-Autopilots/pulse-companion';
 const gh = (...args) => execFileSync('gh', args, { encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'] });
 const version = process.env.RELEASE_VERSION, commit = process.env.GITHUB_SHA, runId = process.env.GITHUB_RUN_ID;
 if (!/^\d+\.\d+\.\d+$/.test(version ?? '') || !/^[a-f0-9]{40}$/.test(commit ?? '') || !/^\d+$/.test(runId ?? '')) throw Error('Missing release provenance');
 if (process.env.GITHUB_REF !== 'refs/heads/main' || process.env.GITHUB_REPOSITORY !== repo) throw Error('Only reviewed public main publishes');
-const origin = process.env.PULSE_ORIGIN ? validateOrigin(process.env.PULSE_ORIGIN) : '';
+const configuredOrigin = validateOrigin(process.env.PULSE_ORIGIN);
+const origin = configuredOrigin === DEFAULT_ORIGIN ? '' : configuredOrigin;
 const host = origin ? new URL(origin).hostname : '';
 const suffix = origin ? createHash('sha256').update(origin).digest('hex').slice(0, 8) : '';
 const tag = `companion-v${version}-${commit.slice(0, 7)}${suffix}`, base = `https://github.com/${repo}/releases/download/${tag}/`;
@@ -42,7 +43,7 @@ const sums = [];
 for (const f of (await readdir('release')).sort()) sums.push(`${createHash('sha256').update(await readFile(join('release', f))).digest('hex')}  ${f}`);
 await writeFile('release/SHA256SUMS.txt', sums.join('\n') + '\n');
 await writeFile('release-notes.md', [
-  `Pulse for Android ${version} — the Pulse web app in a native shell (pre-release for testing).`,
+  `Pulse for Android ${version} — the Pulse web app in a native shell.`,
   '',
   `- Android APK: \`${apk.name}\`, versionCode ${versionCode}, SHA-256 \`${apk.sha256}\`. Signed with the same Pulse key as the Expo app, so it installs over 0.3.5/1.0.0 and keeps the app's place on the phone.`,
   origin ? `- Install address: ${origin} (Android only).` : `- iPhone Simulator app: \`Pulse-${version}-ios-simulator.zip\` (no Apple account; not installable on a real iPhone).`,
@@ -51,14 +52,14 @@ await writeFile('release-notes.md', [
   '',
   `Build: https://github.com/${repo}/actions/runs/${runId}`,
 ].join('\n') + '\n');
-gh('release', 'create', tag, '--repo', repo, '--target', commit, '--prerelease', '--title', `Pulse for Android ${version} (${host || 'phone app'}, pre-release)`, '--notes-file', 'release-notes.md',
+gh('release', 'create', tag, '--repo', repo, '--target', commit, ...(origin ? ['--latest=false'] : []), '--title', `Pulse for Android ${version} (${host || 'phone app'})`, '--notes-file', 'release-notes.md',
   ...(await readdir('release')).map(f => join('release', f)));
 // Get the apps offers the newest phone app from this download pointer. It is not an update channel: installed apps
 // read companion-test, which only promote-android.mjs changes.
 const pointer = 'companion-phone';
 try { gh('release', 'view', pointer, '-R', repo); } catch {
   gh('release', 'create', pointer, '-R', repo, '--target', commit, '--prerelease', '--title', 'Pulse phone app download',
-    '--notes', 'Points Get the apps at the newest phone app pre-release. Installed apps update only from the companion-test channel.');
+    '--notes', 'Points Get the apps at the newest phone app release. Installed apps update only from the companion-test channel.');
 }
 gh('release', 'upload', pointer, join('release', entryName), ...(!origin ? ['release/ios-simulator-entry.json'] : []), '-R', repo, '--clobber');
 console.log(JSON.stringify({ tag, url: `https://github.com/${repo}/releases/tag/${tag}`, versionCode, apkSha256: apk.sha256, downloadPointer: pointer, entryName, ...(origin ? { origin } : {}) }));

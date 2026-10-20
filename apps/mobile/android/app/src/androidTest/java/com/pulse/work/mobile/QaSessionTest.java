@@ -257,6 +257,39 @@ public class QaSessionTest {
                 done.put("injected", a instanceof MainActivity);
                 break;
             }
+            case "seed-image": {
+                android.content.ContentValues values = new android.content.ContentValues();
+                values.put(android.provider.MediaStore.Images.Media.DISPLAY_NAME, "pulse-qa-gallery.jpg");
+                values.put(android.provider.MediaStore.Images.Media.MIME_TYPE, "image/jpeg");
+                values.put(android.provider.MediaStore.Images.Media.RELATIVE_PATH, "Pictures/PulseQA");
+                android.net.Uri uri = c.getContentResolver().insert(android.provider.MediaStore.Images.Media.EXTERNAL_CONTENT_URI, values);
+                assertNotNull("Synthetic image could not be inserted", uri);
+                android.graphics.Bitmap image = android.graphics.Bitmap.createBitmap(64, 48, android.graphics.Bitmap.Config.ARGB_8888);
+                image.eraseColor(0xff336699);
+                try (java.io.OutputStream out = c.getContentResolver().openOutputStream(uri)) {
+                    assertTrue(image.compress(android.graphics.Bitmap.CompressFormat.JPEG, 90, out));
+                } finally { image.recycle(); }
+                done.put("seeded", uri.toString());
+                break;
+            }
+            case "gps-photo": {
+                // Test-only page in the real release WebView: no bridge mocks, personal data or network requests.
+                Activity a = resumed();
+                String html = "<!doctype html><meta name=viewport content='width=device-width'><body style='font:18px sans-serif;padding:24px'>"
+                    + "<h1>GPS site photo QA</h1><label>Take site photo<input id=f type=file accept='image/*' capture='environment'></label><p id=v>Photo idle</p>"
+                    + "<p><label>Gallery photo<input id=g type=file accept='image/*'></label></p>"
+                    + "<p><button id=l>Use location</button></p><p id=o>Location idle</p>"
+                    + "<button id=u>Continue without location</button><p id=r>Ready</p><script>"
+                    + "const picked=(input,key)=>{const file=input.files[0];if(!file)return;const img=new Image();img.onload=()=>{document.body.dataset[key]=JSON.stringify({name:file.name,size:file.size,type:file.type,width:img.naturalWidth,height:img.naturalHeight});v.textContent=key+' received '+file.size+' bytes '+img.naturalWidth+'x'+img.naturalHeight;URL.revokeObjectURL(img.src)};img.src=URL.createObjectURL(file)};f.onchange=()=>picked(f,'photo');g.onchange=()=>picked(g,'gallery');"
+                    + "l.onclick=()=>{o.textContent='Locating';navigator.geolocation.getCurrentPosition(p=>{o.textContent='Location received';document.body.dataset.geo=JSON.stringify({lat:p.coords.latitude,lng:p.coords.longitude})},e=>{o.textContent='Location denied '+e.code;document.body.dataset.geo=JSON.stringify({error:e.code})},{enableHighAccuracy:true,timeout:20000,maximumAge:0})};"
+                    + "u.onclick=()=>{r.textContent='Page usable';document.body.dataset.usable='yes'}</script>";
+                if (a instanceof MainActivity) InstrumentationRegistry.getInstrumentation().runOnMainSync(() -> {
+                    android.webkit.GeolocationPermissions.getInstance().clearAll();
+                    ((MainActivity) a).getBridge().getWebView().loadDataWithBaseURL(MainActivity.ORIGIN + "/qa", html, "text/html", "utf-8", null);
+                });
+                done.put("injected", a instanceof MainActivity);
+                break;
+            }
             case "eval": {
                 Activity a = resumed(); String js = i.getStringExtra("js"); String[] out = { null }; CountDownLatch got = new CountDownLatch(1);
                 if (a instanceof MainActivity) InstrumentationRegistry.getInstrumentation().runOnMainSync(() -> ((MainActivity) a).getBridge().getWebView().evaluateJavascript(js, v -> { out[0] = v; got.countDown(); }));

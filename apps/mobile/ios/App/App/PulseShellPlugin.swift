@@ -94,7 +94,7 @@ public class PulseShellPlugin: CAPPlugin, CAPBridgedPlugin, CLLocationManagerDel
 
     private var enrolled: Bool { keychainGet("refresh") != nil && keychainGet("device") != nil }
 
-    private var version: String { Bundle.main.infoDictionary?["CFBundleShortVersionString"] as? String ?? "1.1.3" }
+    private var version: String { Bundle.main.infoDictionary?["CFBundleShortVersionString"] as? String ?? "1.1.4" }
 
     // MARK: Gateway
     private func gateway(_ path: String, _ body: [String: Any]?, bearer: String? = nil, done: @escaping (Int, [String: Any]) -> Void) {

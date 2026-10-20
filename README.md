@@ -11,11 +11,11 @@ Install an updater-enabled version once from the public releases: choose Windows
 
 From 1.0 every Mac build is signed with one stable Estate Autopilots identity, so updates keep you signed in without Keychain prompts; coming from an earlier test version, Pulse asks you to sign in once more. Saved sign-ins are never read with a Keychain prompt.
 
-Every accepted Companion change is exported through a reviewed client-only allowlist to this repository. A main commit starts hosted builds and required acceptance. Desktop releases publish installers, signed updater bundles, latest-desktop.json and SHA256SUMS.txt. Phone builds publish a signed APK and an iPhone Simulator zip as a separate pre-release. Get the apps reads the published phone pointer; installed Android phones keep the existing updater channel until the owner approves an explicit promote run.
+Every accepted Companion change is exported through a reviewed client-only allowlist to this repository. A main commit starts hosted builds and required acceptance. Desktop releases publish installers, signed updater bundles, latest-desktop.json and SHA256SUMS.txt. Phone builds publish a signed APK and an iPhone Simulator zip as a separate release. Get the apps reads the published phone pointer; installed Android phones keep the existing updater channel until the owner approves an explicit promote run.
 
 Build: Node from `.nvmrc`, `corepack enable`, `pnpm install --frozen-lockfile`.
 Desktop: `pnpm --dir apps/desktop run build`, then `pnpm --dir apps/desktop exec tauri build` on Windows or macOS.
-Phone: `pnpm --dir apps/mobile exec cap sync`, then `gradle assembleRelease` in apps/mobile/android (Gradle 8.14, JDK 21) or Xcode with apps/mobile/ios/App/App.xcodeproj, as in mobile.yml. Phone builds are published as pre-releases; the test channel offers one to installed phones only after an explicit promote run.
+Phone: `pnpm --dir apps/mobile exec cap sync`, then `gradle assembleRelease` in apps/mobile/android (Gradle 8.14, JDK 21) or Xcode with apps/mobile/ios/App/App.xcodeproj, as in mobile.yml. Phone builds are published as normal releases; host-specific builds cannot become GitHub's Latest. The test channel offers a release to installed phones only after an explicit promote run.
 Chrome: `node apps/chrome-extension/scripts/package.mjs pulse-chrome.zip`.
 Worker cap: two. Workspace checks run sequentially.
 

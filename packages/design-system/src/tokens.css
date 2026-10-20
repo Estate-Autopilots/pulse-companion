@@ -16,10 +16,12 @@
   --theme-focus: #7a68e6;
   --theme-info: #4167cf;
   --theme-success: #328267;
-  --theme-warning: #9a6209;
+  /* EST-1202: a shade deeper (was #9a6209), so warning words read at 4.5:1 or more on their own tinted chips (4.87:1)
+     and on the subtle surface (5.27:1, was 4.45:1). */
+  --theme-warning: #8a5807;
   --theme-danger: #b54646;
   --theme-disabled-surface: #eef1f5;
-  --theme-disabled-text: #9099a8;
+  --theme-disabled-text: #7f8396;
   --theme-shadow: 0 8px 28px rgb(24 20 60 / 7%);
   --theme-brand-2: #8b5cf6;
   --theme-transition-duration: 160ms;
@@ -43,7 +45,7 @@
   --theme-warning: #e2b667;
   --theme-danger: #e38e8e;
   --theme-disabled-surface: #262631;
-  --theme-disabled-text: #747f91;
+  --theme-disabled-text: #80849a;
   --theme-shadow: 0 12px 32px rgb(0 0 0 / 28%);
   --theme-brand-2: #c084fc;
 }
