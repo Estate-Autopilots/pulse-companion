@@ -76,6 +76,9 @@ export function decidePresence({ signal, payload, prefs, at, recent = [] }) {
 
   if (trigger === 'exit') {
     if (state !== 'in' && state !== 'break') return none('not-checked-in');
+    // ATT: leaving is Pulse's to judge from every signal together (a break, the end of the day, or one question when
+    // they conflict); the phone no longer asks on its own the moment a geofence says "exit".
+    if (payload.presence?.autoCheckOut === true) return none('server-decides');
     const early = Number.isFinite(end) && at < end - 60 * 60000;
     return { kind: 'suggest-leave', key, placeId: place.placeId, actions: early ? ['break-start', 'check-out'] : ['check-out'],
       title: early ? 'Heading out?' : 'Leaving for the day?', body: early ? 'Take a break or check out — one tap.' : 'Check out when you’re done for the day.' };

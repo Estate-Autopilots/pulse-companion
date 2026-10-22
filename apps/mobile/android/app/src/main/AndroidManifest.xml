@@ -17,7 +17,16 @@
     <uses-permission android:name="android.permission.REQUEST_INSTALL_PACKAGES" />
     <uses-permission android:name="android.permission.VIBRATE" />
     <uses-permission android:name="android.permission.RECEIVE_BOOT_COMPLETED" />
-    <!-- No camera permission: a photo for an upload is taken by the camera app itself. -->
+    <!-- No camera permission for uploads: a photo for an upload is taken by the camera app itself.
+         CHAT-VOICE: calls and voice messages use the microphone (and the camera for a video call) inside Pulse;
+         Capacitor's web view asks for them the first time a call or a voice message needs them. An incoming call may
+         show full screen on a locked phone. -->
+    <uses-permission android:name="android.permission.RECORD_AUDIO" />
+    <uses-permission android:name="android.permission.MODIFY_AUDIO_SETTINGS" />
+    <uses-permission android:name="android.permission.CAMERA" />
+    <uses-permission android:name="android.permission.USE_FULL_SCREEN_INTENT" />
+    <uses-feature android:name="android.hardware.camera" android:required="false" />
+    <uses-feature android:name="android.hardware.microphone" android:required="false" />
 
     <application
         android:allowBackup="false"

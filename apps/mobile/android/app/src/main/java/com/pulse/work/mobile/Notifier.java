@@ -17,6 +17,8 @@ final class Notifier {
 
     static final String UPDATES = "pulse-updates";
     static final String APP = "pulse-app";
+    /** CHAT-VOICE: incoming calls ring (the phone's ringtone) and may show full screen. */
+    static final String CALLS = "pulse-calls";
     private static final String GROUP = "pulse";
     private static volatile int count = 0;
 
@@ -33,6 +35,15 @@ final class Notifier {
         app.setDescription("Downloads and app updates.");
         app.setShowBadge(false);
         manager.createNotificationChannel(app);
+        NotificationChannel calls = new NotificationChannel(CALLS, "Calls", NotificationManager.IMPORTANCE_HIGH);
+        calls.setDescription("Someone calling you in Pulse.");
+        calls.setSound(android.media.RingtoneManager.getDefaultUri(android.media.RingtoneManager.TYPE_RINGTONE),
+            new android.media.AudioAttributes.Builder().setUsage(android.media.AudioAttributes.USAGE_NOTIFICATION_RINGTONE)
+                .setContentType(android.media.AudioAttributes.CONTENT_TYPE_SONIFICATION).build());
+        calls.enableVibration(true);
+        calls.setVibrationPattern(new long[] { 0, 600, 300, 600, 300, 600 });
+        calls.setLockscreenVisibility(android.app.Notification.VISIBILITY_PUBLIC);
+        manager.createNotificationChannel(calls);
     }
 
     static boolean enabled(Context context) {
@@ -57,6 +68,7 @@ final class Notifier {
 
     static void post(Context context, String id, String title, String body, String href, String eventType) {
         if (!enabled(context) || id == null || title == null || title.isEmpty()) return;
+        if ("chat.call".equals(eventType) && href != null && href.startsWith("/chats?")) { call(context, id, title, href); return; }
         Intent open = new Intent(context, MainActivity.class)
             .setAction("com.pulse.work.mobile.OPEN." + id)
             .putExtra(MainActivity.EXTRA_HREF, href != null && href.startsWith("/") && !href.startsWith("//") ? href : "/notifications")
@@ -88,6 +100,26 @@ final class Notifier {
         } catch (SecurityException ignored) {
             // Permission withdrawn between the check and the post.
         }
+    }
+
+    /** CHAT-VOICE: an incoming call rings on the Calls channel, full screen on a locked phone, for as long as it rings;
+     *  Answer opens the call in Pulse and answers it (the page reads answer=1). */
+    static void call(Context context, String id, String title, String href) {
+        Intent open = new Intent(context, MainActivity.class).setAction("com.pulse.work.mobile.CALL." + id)
+            .putExtra(MainActivity.EXTRA_HREF, href).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK | Intent.FLAG_ACTIVITY_SINGLE_TOP);
+        Intent answer = new Intent(context, MainActivity.class).setAction("com.pulse.work.mobile.ANSWER." + id)
+            .putExtra(MainActivity.EXTRA_HREF, href + "&answer=1").addFlags(Intent.FLAG_ACTIVITY_NEW_TASK | Intent.FLAG_ACTIVITY_SINGLE_TOP);
+        int flags = PendingIntent.FLAG_IMMUTABLE | PendingIntent.FLAG_UPDATE_CURRENT;
+        PendingIntent tap = PendingIntent.getActivity(context, ("call" + id).hashCode(), open, flags);
+        PendingIntent take = PendingIntent.getActivity(context, ("answer" + id).hashCode(), answer, flags);
+        NotificationCompat.Builder b = new NotificationCompat.Builder(context, CALLS)
+            .setSmallIcon(R.drawable.ic_stat_pulse).setColor(0xFF22B35E)
+            .setContentTitle(title).setContentText("Tap to answer")
+            .setCategory(NotificationCompat.CATEGORY_CALL).setPriority(NotificationCompat.PRIORITY_MAX)
+            .setContentIntent(tap).setFullScreenIntent(tap, true).setAutoCancel(true).setOngoing(true)
+            .setTimeoutAfter(45_000).setVisibility(NotificationCompat.VISIBILITY_PUBLIC)
+            .addAction(new NotificationCompat.Action.Builder(0, "Answer", take).build());
+        try { NotificationManagerCompat.from(context).notify(id, 1, b.build()); } catch (SecurityException ignored) {}
     }
 
     /** The answer to an attendance notification replaces it: done, or open My desk to finish. */

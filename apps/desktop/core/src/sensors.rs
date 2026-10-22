@@ -255,6 +255,26 @@ pub fn focus() -> Option<(String, bool)> {
         nanos >= 180_000_000_000,
     ))
 }
+/// ATT: seconds since the last keyboard or mouse input, for office presence's "this laptop is in use". It never reads
+/// which application is in front (that is the separate, notice-gated work tracker).
+#[cfg(windows)]
+pub fn idle_seconds() -> Option<u64> {
+    use windows_sys::Win32::{System::SystemInformation::GetTickCount, UI::Input::KeyboardAndMouse::{GetLastInputInfo, LASTINPUTINFO}};
+    unsafe {
+        let mut input = LASTINPUTINFO { cbSize: std::mem::size_of::<LASTINPUTINFO>() as u32, dwTime: 0 };
+        if GetLastInputInfo(&mut input) == 0 { return None; }
+        Some(u64::from(GetTickCount().wrapping_sub(input.dwTime)) / 1000)
+    }
+}
+#[cfg(target_os = "macos")]
+pub fn idle_seconds() -> Option<u64> {
+    let out = std::process::Command::new("/usr/sbin/ioreg").args(["-c", "IOHIDSystem", "-d", "1"]).output().ok()?;
+    let text = String::from_utf8_lossy(&out.stdout);
+    let nanos = text.lines().find(|s| s.contains("HIDIdleTime"))?.split('=').next_back()?.trim().parse::<u64>().ok()?;
+    Some(nanos / 1_000_000_000)
+}
+#[cfg(not(any(windows, target_os = "macos")))]
+pub fn idle_seconds() -> Option<u64> { None }
 #[cfg(not(any(windows, target_os = "macos")))]
 pub fn focus() -> Option<(String, bool)> {
     None

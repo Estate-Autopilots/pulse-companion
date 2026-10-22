@@ -43,7 +43,10 @@ export function dueReminders(payload, prefs, at, shown = []) {
     const away = liveSeconds(payload.entry, at).onBreak;
     if (away >= p.breakMinutes * 60) add({ id: `break:${payload.entry.breakStartedAt}`, kind: 'break-back', action: 'break-end', title: 'Back from your break?', body: `You’ve been away ${duration(away)}. Tap when you’re back.` });
   }
-  if (p.checkOut && (state === 'in' || state === 'break') && Number.isFinite(end) && at >= checkOutAt(payload, end)) {
+  // ATT: with automatic check-out on, Pulse checks out when someone leaves and asks only on a conflict: no local
+  // "Shift is over" on top of that.
+  const serverCheckout = payload.presence?.autoCheckOut === true;
+  if (p.checkOut && !serverCheckout && (state === 'in' || state === 'break') && Number.isFinite(end) && at >= checkOutAt(payload, end)) {
     add({ id: `check-out:${payload.today}`, kind: 'check-out', action: 'check-out', title: 'Shift is over', body: `It’s past ${friendlyClock(payload.shift.end)}. Check out when you’re done for the day.` });
   }
   return out;
@@ -61,7 +64,7 @@ export function reminderPlan(payload, prefs, at, days = 7) {
   if (p.checkIn && payload.state === 'out' && payload.shift?.workingDay && Number.isFinite(start) && start > at) {
     plan.push({ id: `check-in:${payload.today}`, at: start, kind: 'check-in', action: 'check-in', title: 'Time to check in', body: `Your shift starts at ${friendlyClock(payload.shift.start)}.` });
   }
-  if (p.checkOut && (payload.state === 'in' || payload.state === 'break') && Number.isFinite(end) && checkOutAt(payload, end) > at) {
+  if (p.checkOut && payload.presence?.autoCheckOut !== true && (payload.state === 'in' || payload.state === 'break') && Number.isFinite(end) && checkOutAt(payload, end) > at) {
     plan.push({ id: `check-out:${payload.today}`, at: checkOutAt(payload, end), kind: 'check-out', action: 'check-out', title: 'Shift is over', body: `Check out when you’re done. Shift ended at ${friendlyClock(payload.shift.end)}.` });
   }
   if (p.breakBack && payload.state === 'break' && payload.entry?.breakStartedAt) {

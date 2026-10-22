@@ -244,6 +244,24 @@ public class PulseShellPlugin extends Plugin {
         call.resolve();
     }
 
+    /** CHAT-VOICE: in a call, the loudspeaker or the earpiece (a web view starts calls on the earpiece). */
+    @PluginMethod
+    public void setSpeaker(PluginCall call) {
+        boolean on = Boolean.TRUE.equals(call.getBoolean("on", true));
+        android.media.AudioManager audio = (android.media.AudioManager) getContext().getSystemService(Context.AUDIO_SERVICE);
+        if (audio == null) { call.resolve(); return; }
+        if (Build.VERSION.SDK_INT >= 31) {
+            if (on) {
+                for (android.media.AudioDeviceInfo d : audio.getAvailableCommunicationDevices())
+                    if (d.getType() == android.media.AudioDeviceInfo.TYPE_BUILTIN_SPEAKER) { audio.setCommunicationDevice(d); break; }
+            } else audio.clearCommunicationDevice();
+        } else {
+            audio.setMode(android.media.AudioManager.MODE_IN_COMMUNICATION);
+            audio.setSpeakerphoneOn(on);
+        }
+        JSObject result = new JSObject(); result.put("on", on); call.resolve(result);
+    }
+
     @PluginMethod
     public void setBadge(PluginCall call) {
         Notifier.badge(getContext(), call.getInt("count", 0));
