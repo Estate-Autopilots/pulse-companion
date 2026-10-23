@@ -1,3 +1,4 @@
+import AVFoundation
 import Capacitor
 import CoreLocation
 import Foundation
@@ -32,6 +33,7 @@ public class PulseShellPlugin: CAPPlugin, CAPBridgedPlugin, CLLocationManagerDel
         CAPPluginMethod(name: "checkInbox", returnType: CAPPluginReturnPromise),
         CAPPluginMethod(name: "requestNotifications", returnType: CAPPluginReturnPromise),
         CAPPluginMethod(name: "setBadge", returnType: CAPPluginReturnPromise),
+        CAPPluginMethod(name: "setSpeaker", returnType: CAPPluginReturnPromise),
         CAPPluginMethod(name: "setTheme", returnType: CAPPluginReturnPromise),
         CAPPluginMethod(name: "setPushToken", returnType: CAPPluginReturnPromise),
         CAPPluginMethod(name: "presencePreferences", returnType: CAPPluginReturnPromise),
@@ -256,6 +258,19 @@ public class PulseShellPlugin: CAPPlugin, CAPBridgedPlugin, CLLocationManagerDel
     @objc func setBadge(_ call: CAPPluginCall) {
         setBadgeCount(max(0, call.getInt("count") ?? 0))
         call.resolve()
+    }
+
+    /// CHAT-VOICE: a call's audio on the loudspeaker or the earpiece, as on Android (READY: the iPhone bridge lacked it).
+    @objc func setSpeaker(_ call: CAPPluginCall) {
+        let on = call.getBool("on") ?? true
+        let session = AVAudioSession.sharedInstance()
+        do {
+            try session.setCategory(.playAndRecord, mode: .voiceChat, options: [.allowBluetooth])
+            try session.overrideOutputAudioPort(on ? .speaker : .none)
+            call.resolve(["on": on])
+        } catch {
+            call.reject("The speaker could not be switched")
+        }
     }
 
     @objc func setTheme(_ call: CAPPluginCall) {

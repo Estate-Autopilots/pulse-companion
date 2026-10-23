@@ -57,7 +57,9 @@ test('installs over the Expo app: same package, durable key, higher versionCode'
 });
 
 test('the Android manifest asks for no tracking and keeps credentials on the phone', () => {
-  assert.doesNotMatch(manifest, /RECORD_AUDIO|READ_CONTACTS|FOREGROUND_SERVICE/);
+  // CHAT-VOICE (22 Oct 2026): calls and voice messages need the microphone (asked when a call or a recording starts);
+  // contacts are never read. READY: the test still forbade RECORD_AUDIO from before calls existed (intended change).
+  assert.doesNotMatch(manifest, /READ_CONTACTS|FOREGROUND_SERVICE/);
   // PRESENCE-ONBOARD (owner, 10 Oct 2026): office arrival by geofence. Background location exists only for Android's
   // own geofences around the person's offices, after their consent and a separate "Allow all the time"; there is no
   // foreground service and no continuous location request anywhere in the shell (a position is read once, on a tap).
@@ -69,7 +71,9 @@ test('the Android manifest asks for no tracking and keeps credentials on the pho
     if (f !== 'PulseShellPlugin.java') assert.doesNotMatch(src, /getCurrentLocation|requestSingleUpdate/, `${f} reads no position (only the tap in PulseShellPlugin does)`);
   }
   assert.doesNotMatch(read('android/app/src/main/java/com/pulse/work/mobile/OfficeArrival.java'), /getLatitude|getLongitude|"lat"\s*,|put\("lng"/, 'arrival sends an office and a signal kind, never a position');
-  assert.doesNotMatch(manifest, /android\.permission\.CAMERA/, 'photos come from the camera app; no camera permission');
+  // CHAT-VOICE (22 Oct 2026): video calls use the camera (asked when a video call starts); photos still come from the
+  // camera app. READY: the test forbade CAMERA from before calls existed (intended change).
+  assert.match(manifest, /android\.permission\.CAMERA/);
   // PEOPLE-CONTACTS: "Take a photo" (an image field with capture) opens the camera in WKWebView, which iOS allows only
   // with a camera usage description; Photo Library needs none (the system picker runs outside the app).
   assert.match(read('ios/App/App/Info.plist'), /<key>NSCameraUsageDescription<\/key>\s*<string>[^<]{20,}<\/string>/, 'the iPhone app says why it may use the camera');
@@ -103,7 +107,8 @@ test('the bridge has the same methods on Android, iPhone and in the web app', ()
   const web = resolve(repo, 'apps/web/app/lib/native-shell.ts');
   if (existsSync(web)) {
     const body = readFileSync(web, 'utf8').split('export interface PulseShell {')[1].split('\n}')[0];
-    const webMethods = [...body.matchAll(/^\s+(\w+)\(/gm)].map(m => m[1]).filter(m => !['checkPermissions', 'requestPermissions'].includes(m)).sort();
+    // A method an older installed app may lack is optional in the web's type (setSpeaker?): it still counts.
+    const webMethods = [...body.matchAll(/^\s+(\w+)\??\(/gm)].map(m => m[1]).filter(m => !['checkPermissions', 'requestPermissions'].includes(m)).sort();
     assert.deepEqual(webMethods, androidMethods);
   }
 });
