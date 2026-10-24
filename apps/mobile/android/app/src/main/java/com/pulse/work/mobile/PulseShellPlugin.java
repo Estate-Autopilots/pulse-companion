@@ -14,6 +14,8 @@ import android.os.Build;
 import android.os.CancellationSignal;
 import android.os.Handler;
 import android.os.Looper;
+import android.os.Process;
+import android.os.SystemClock;
 import android.provider.Settings;
 import android.util.Base64;
 import androidx.browser.customtabs.CustomTabColorSchemeParams;
@@ -103,6 +105,8 @@ public class PulseShellPlugin extends Plugin {
         r.put("notificationsAsk", notificationsAsk(c));
         r.put("pushReady", firebaseReady());
         r.put("pushActive", pushActive(c));
+        // PERF: how long this app process has run, so the page can time a cold start from the tap (telemetry app.start).
+        r.put("processAgeMs", SystemClock.elapsedRealtime() - Process.getStartElapsedRealtime());
         call.resolve(r);
     }
 
