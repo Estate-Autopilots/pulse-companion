@@ -49,11 +49,11 @@ test('installs over the Expo app: same package, durable key, higher versionCode'
   assert.match(gradle, new RegExp(`def pulseVersion = '${pkg.version.replaceAll('.', '\\.')}'`));
   const [a, b, c] = pkg.version.split('.').map(Number);
   assert.ok(a * 1000000 + b * 1000 + c > PUBLISHED_EXPO_VERSION_CODE);
-  assert.equal(pkg.version, '1.1.4');
+  assert.equal(pkg.version, '1.1.5');
   assert.match(gradle, /storeType "PKCS12"[\s\S]*keyAlias "pulse"/, 'the Expo build used this key store and alias');
   const pbx = read('ios/App/App.xcodeproj/project.pbxproj');
   assert.equal((pbx.match(new RegExp(`MARKETING_VERSION = ${pkg.version.replaceAll('.', '\\.')};`, 'g')) ?? []).length, 2);
-  assert.equal((pbx.match(/CURRENT_PROJECT_VERSION = 1001004;/g) ?? []).length, 2);
+  assert.equal((pbx.match(/CURRENT_PROJECT_VERSION = 1001005;/g) ?? []).length, 2);
 });
 
 test('the Android manifest asks for no tracking and keeps credentials on the phone', () => {
@@ -303,7 +303,7 @@ test('host releases keep trusted URLs and publish only their own download entry;
       const entryName = origin ? `android-${new URL(origin).hostname}-entry.json` : 'android-channel-entry.json';
       const entry = JSON.parse(readFileSync(join(dir, 'release', entryName)));
       assert.equal(entry.origin, origin || undefined);
-      assert.equal(entry.versionCode, 1001004);
+      assert.equal(entry.versionCode, 1001005);
       assert.equal(entry.size, Buffer.byteLength('synthetic-apk'));
       assert.equal(entry.sha256, createHash('sha256').update('synthetic-apk').digest('hex'));
       assert.equal(entry.url, `https://github.com/Estate-Autopilots/pulse-companion/releases/download/${result.tag}/${entry.name}`);
@@ -424,4 +424,34 @@ else {
   ];
   // The script itself refuses (exit 1 with the reason), not this test's own upload check.
   for (const [label, reason, origin, chosen, replaced] of refusals) assert.throws(() => promote(origin, chosen, replaced), { status: 1, stderr: reason }, label);
+});
+
+// CALLS-NATIVE: a Pulse call rings like a phone call with Pulse closed or the phone locked.
+test('calls ring with Pulse closed: one push service, a full-screen ring over the lock screen, PushKit on iPhone', () => {
+  // One push service handles Pulse's pushes; the Capacitor plugin's own would otherwise receive them instead.
+  assert.match(manifest, /<service android:name="\.CallPushService" android:exported="false">[\s\S]*?com\.google\.firebase\.MESSAGING_EVENT/);
+  assert.match(manifest, /<service android:name="com\.capacitorjs\.plugins\.pushnotifications\.MessagingService" tools:node="remove" \/>/);
+  assert.match(manifest, /xmlns:tools="http:\/\/schemas\.android\.com\/tools"/);
+  // The ring screen shows over the lock screen and is not reachable from other apps; Decline is an explicit receiver.
+  assert.match(manifest, /android:name="\.IncomingCallActivity"[\s\S]*?android:exported="false"[\s\S]*?android:showWhenLocked="true"[\s\S]*?android:turnScreenOn="true"/);
+  assert.match(manifest, /<receiver android:name="\.CallAction" android:exported="false" \/>/);
+  assert.match(manifest, /USE_FULL_SCREEN_INTENT/);
+  assert.match(gradle, /com\.google\.firebase:firebase-messaging:/);
+  const ringer = read('android/app/src/main/java/com/pulse/work/mobile/CallRinger.java');
+  assert.match(ringer, /FLAG_INSISTENT/, 'the ringtone repeats until answered, declined or over');
+  assert.match(ringer, /setFullScreenIntent\(/);
+  assert.match(ringer, /setTimeoutAfter\(/);
+  assert.match(ringer, /"calls\/" \+ call \+ "\/ring"/, 'the ring asks Pulse whether it still rings');
+  const service = read('android/app/src/main/java/com/pulse/work/mobile/CallPushService.java');
+  assert.match(service, /PushNotificationsPlugin\.sendRemoteMessage\(message\)/, 'other pushes still reach the plugin');
+  assert.match(service, /PushNotificationsPlugin\.onNewToken\(token\)/);
+  // The device credential may only ask whether a call rings and decline it (web gateway and API scope).
+  const gateway = readFileSync(resolve(repo, 'apps/web/app/api/native/gateway.mjs'), 'utf8');
+  assert.match(gateway, /calls\\\/\[0-9a-f-\]\{36\}\\\/\(ring\|decline\)/);
+  // iPhone: PushKit VoIP pushes reported to CallKit, the VoIP token sent to Pulse, the voip background mode.
+  assert.match(swift, /PKPushRegistry/);
+  assert.match(swift, /reportNewIncomingCall/);
+  assert.match(swift, /voipToken/);
+  const plist = read('ios/App/App/Info.plist');
+  assert.match(plist, /<string>voip<\/string>/);
 });

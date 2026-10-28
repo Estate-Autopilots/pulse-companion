@@ -163,6 +163,22 @@ final class Updater {
         return ready.getName();
     }
 
+    /** Play installs and updates this copy (the Play build has no install permission, or Play installed it): no APK updates. */
+    static boolean storeManaged(Context context) {
+        try {
+            PackageManager pm = context.getPackageManager();
+            String pkg = context.getPackageName();
+            String[] asked = pm.getPackageInfo(pkg, PackageManager.GET_PERMISSIONS).requestedPermissions;
+            boolean canAsk = false;
+            if (asked != null) for (String p : asked) if ("android.permission.REQUEST_INSTALL_PACKAGES".equals(p)) canAsk = true;
+            if (!canAsk) return true;
+            String installer = Build.VERSION.SDK_INT >= 30 ? pm.getInstallSourceInfo(pkg).getInstallingPackageName() : pm.getInstallerPackageName(pkg);
+            return "com.android.vending".equals(installer);
+        } catch (Exception e) {
+            return false;
+        }
+    }
+
     static boolean canInstall(Context context) {
         return Build.VERSION.SDK_INT < 26 || context.getPackageManager().canRequestPackageInstalls();
     }

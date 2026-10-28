@@ -1,5 +1,6 @@
 <?xml version="1.0" encoding="utf-8"?>
-<manifest xmlns:android="http://schemas.android.com/apk/res/android">
+<manifest xmlns:android="http://schemas.android.com/apk/res/android"
+    xmlns:tools="http://schemas.android.com/tools">
 
     <!-- Pulse is the production web app; the shell adds only what a browser cannot do. -->
     <uses-permission android:name="android.permission.INTERNET" />
@@ -25,6 +26,8 @@
     <uses-permission android:name="android.permission.MODIFY_AUDIO_SETTINGS" />
     <uses-permission android:name="android.permission.CAMERA" />
     <uses-permission android:name="android.permission.USE_FULL_SCREEN_INTENT" />
+    <!-- CALLS-NATIVE: a ring turns the screen on for its full-screen call screen. -->
+    <uses-permission android:name="android.permission.WAKE_LOCK" />
     <uses-feature android:name="android.hardware.camera" android:required="false" />
     <uses-feature android:name="android.hardware.microphone" android:required="false" />
 
@@ -86,6 +89,25 @@
                 <action android:name="android.intent.action.MY_PACKAGE_REPLACED" />
             </intent-filter>
         </receiver>
+        <!-- CALLS-NATIVE: Pulse pushes. A call ring, stop and missed call are handled here (the phone rings with Pulse
+             closed); everything else goes on to the Capacitor push plugin, whose own service is replaced. -->
+        <service android:name=".CallPushService" android:exported="false">
+            <intent-filter android:priority="10">
+                <action android:name="com.google.firebase.MESSAGING_EVENT" />
+            </intent-filter>
+        </service>
+        <service android:name="com.capacitorjs.plugins.pushnotifications.MessagingService" tools:node="remove" />
+        <!-- CALLS-NATIVE: the full-screen ring over the lock screen, and Decline from it or from the notification. -->
+        <activity
+            android:name=".IncomingCallActivity"
+            android:exported="false"
+            android:excludeFromRecents="true"
+            android:launchMode="singleTop"
+            android:taskAffinity="com.pulse.work.mobile.ring"
+            android:showWhenLocked="true"
+            android:turnScreenOn="true"
+            android:theme="@style/AppTheme.NoActionBar" />
+        <receiver android:name=".CallAction" android:exported="false" />
         <!-- One-tap answers on attendance notifications ("Check in?"): explicit, sealed intents only. -->
         <receiver android:name=".AttendanceAction" android:exported="false" />
 

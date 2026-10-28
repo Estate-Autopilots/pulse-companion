@@ -74,7 +74,7 @@ public class MainActivity extends BridgeActivity {
             }
         });
         Notifier.channels(this);
-        if (ShellStore.enrolled(this)) { InboxWorker.schedule(this); OfficeArrival.sync(this); }
+        if (ShellStore.enrolled(this)) { InboxWorker.schedule(this); OfficeArrival.sync(this); CallPush.register(this); }
         // Capacitor records the first intent but does not navigate to it. App Links and notification taps must
         // also open their target when Android creates the activity, not just when it reuses a running one.
         open(getIntent());
@@ -116,6 +116,13 @@ public class MainActivity extends BridgeActivity {
             intent.removeExtra(EXTRA_ASK);
             askNotifications();
         }
+        // CALLS-NATIVE: Answer from a ring: the ring stops and Pulse shows over the lock screen for the call.
+        String action = intent.getAction();
+        if (action != null && action.startsWith("com.pulse.work.mobile.ANSWER.")) {
+            String call = intent.getStringExtra(CallRinger.EXTRA_CALL);
+            if (RingPolicy.validId(call)) CallRinger.stop(this, call);
+            inCall(true);
+        }
         String target = null;
         String href = intent.getStringExtra(EXTRA_HREF);
         if (href != null && href.startsWith("/") && !href.startsWith("//")) target = ORIGIN + href;
@@ -125,6 +132,21 @@ public class MainActivity extends BridgeActivity {
         intent.removeExtra(EXTRA_HREF);
         intent.setData(null);
         getBridge().getWebView().loadUrl(target);
+    }
+
+    /** CALLS-NATIVE: during a call answered from the lock screen, Pulse stays above it; the page ends it (setInCall). */
+    @SuppressWarnings("deprecation")
+    void inCall(boolean on) {
+        runOnUiThread(() -> {
+            if (Build.VERSION.SDK_INT >= 27) {
+                setShowWhenLocked(on);
+                setTurnScreenOn(on);
+            } else if (on) {
+                getWindow().addFlags(android.view.WindowManager.LayoutParams.FLAG_SHOW_WHEN_LOCKED | android.view.WindowManager.LayoutParams.FLAG_TURN_SCREEN_ON);
+            } else {
+                getWindow().clearFlags(android.view.WindowManager.LayoutParams.FLAG_SHOW_WHEN_LOCKED | android.view.WindowManager.LayoutParams.FLAG_TURN_SCREEN_ON);
+            }
+        });
     }
 
     void askNotifications() {

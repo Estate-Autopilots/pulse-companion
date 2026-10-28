@@ -7,7 +7,9 @@ class AppDelegate: UIResponder, UIApplicationDelegate {
     var window: UIWindow?
 
     func application(_ application: UIApplication, didFinishLaunchingWithOptions launchOptions: [UIApplication.LaunchOptionsKey: Any]?) -> Bool {
-        // Override point for customization after application launch.
+        // CALLS-NATIVE: PushKit and CallKit start at launch: a VoIP push can launch Pulse in the background for a call,
+        // and the call must reach CallKit before that push is handled (PulseCalls in PulseShellPlugin.swift).
+        PulseCalls.shared.start()
         return true
     }
 

@@ -30,3 +30,15 @@ permission or new plugin is needed. GPS acceptance seeds and selects a synthetic
 Media provider and archives raw package/appops grants before the tap and after Allow. Native notification acceptance
 waits at most three seconds for posting, distinguishes a missing notification from a missing public copy, and saves
 state for both notification permission choices even on failure.
+
+Google Play (1.1.5+): `gradle bundlePlay` builds the Play AAB, which is the release build without `REQUEST_INSTALL_PACKAGES`
+(`android/app/src/play/AndroidManifest.xml`). Play updates that copy, so the in-app GitHub updater says nothing there,
+and it also stays quiet in any copy that Play installed. `gradle assembleRelease` still builds the sideload APK with the
+updater. Both use the durable `pulse` key (`PULSE_ANDROID_KEYSTORE` / `PULSE_ANDROID_KEY_PASSWORD`).
+
+Test phones sign in with a one-time code instead of a typed password:
+1. An admin opens Settings → Devices → Add a test device, which shows a QR code and six digits. The code lasts 10
+   minutes and works once.
+2. On the phone, choose "Sign in with a code from another device" on the sign-in page, then type the code or scan the
+   QR code.
+3. For adb QA runs, `scripts/adb-device-sign-in.sh <code|QR link> [serial]` types the code. It stores nothing.
