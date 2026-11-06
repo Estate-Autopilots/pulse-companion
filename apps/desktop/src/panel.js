@@ -9,6 +9,8 @@ import { mountCommunications } from './companion/communications.js';
 import { mountPanel, renderConnect } from './companion/panel.js';
 import { mountFeatures } from './companion/features.js';
 import { applyTheme, store } from './prefs.js';
+import { addressHost, renderAddress, saveAddress } from './address.js';
+import { ADMIN_WAIT, follow, learnCompany, place } from './pairing.js';
 import { DEMO_CONVERSATION, demoCall, demoSnapshot } from './demo-comms.js';
 
 const invoke = (cmd, args) => window.__TAURI__.core.invoke(cmd, args);
@@ -17,8 +19,8 @@ const root = document.getElementById('app');
 const updateHost = document.getElementById('update-host');
 const state = {
   session: null, payload: null, offset: 0, demo: null, screen: 'day', busy: false, status: null, celebrate: false,
-  connect: { phase: 'start' }, prefs: prefsWith(store.get('prefs', {})), mode: store.get('mode', null), queue: [], legacyQueue: store.get('queue', []).length > 0,
-  shown: new Set(store.get('shown', [])), info: { version: '', shortcut: 'Ctrl+Alt+P' }, lastTray: '', pollTimer: null,
+  connect: { phase: 'start' }, address: {}, prefs: prefsWith(store.get('prefs', {})), mode: store.get('mode', null), queue: [], legacyQueue: store.get('queue', []).length > 0,
+  shown: new Set(store.get('shown', [])), info: { version: '', shortcut: 'Ctrl+Alt+P' }, lastTray: '', lastTrayMenu: '', stopPoll: () => {},
 };
 applyTheme();
 const communications = mountCommunications(root, {
@@ -119,11 +121,17 @@ function render() {
     const back = Object.assign(document.createElement('button'), { type: 'button', className: 'pc-btn', textContent: 'Back to today' });
     back.addEventListener('click', () => { state.screen = 'day'; render(); });
     notes.append(back); root.replaceChildren(notes);
+  } else if (state.screen === 'connect' && !state.session?.base) {
+    // A new computer first learns which Pulse it belongs to; sign-in appears once the address passes the probe.
+    renderAddress(root, { ...state.address, still: !state.prefs.mascot }, addressHandlers);
+    if (!state.prefs.mascot) root.querySelector('.pc-pip')?.remove();
   } else if (state.screen === 'connect') {
-    renderConnect(root, { ...state.connect, still: !state.prefs.mascot }, connectHandlers);
+    renderConnect(root, { ...state.connect, place: place(state.session), still: !state.prefs.mascot }, connectHandlers);
+    const asked = state.session;
+    void learnCompany(invoke, asked).then((company) => { if (company && state.session === asked) { state.session = { ...asked, company }; render(); } });
     const foot = document.createElement('div');
     foot.className = 'connect-foot';
-    foot.append(Object.assign(document.createElement('span'), { textContent: new URL(state.session?.base ?? 'https://pulse.estateautopilots.com').host }));
+    foot.append(Object.assign(document.createElement('span'), { textContent: addressHost(state.session?.base) }));
     const settings = Object.assign(document.createElement('button'), { type: 'button', textContent: 'Settings' });
     settings.addEventListener('click', () => void invoke('open_settings', { section: null }));
     foot.append(settings);
@@ -245,33 +253,42 @@ const connectHandlers = {
   async onPair() {
     state.connect = { phase: 'start', busy: true, message: 'Opening Pulse in your browser…' }; render();
     try {
-      const started = await invoke('companion_pair_start', { expectedPerson: store.get('expectedPerson', null), base: state.session?.base ?? 'https://pulse.estateautopilots.com/api/native/v0' });
+      const started = await invoke('companion_pair_start', { expectedPerson: store.get('expectedPerson', null), base: state.session?.base });
       state.connect = { phase: 'code', code: started.code, url: started.verifyUrl, message: 'Waiting for your approval…' }; render();
-      clearInterval(state.pollTimer);
-      const deadline = Date.now() + (started.expiresIn ?? 600) * 1000;
-      state.pollTimer = setInterval(async () => {
-        if (Date.now() > deadline) { clearInterval(state.pollTimer); state.connect = { phase: 'error', message: 'The code expired. Start again when you’re ready.' }; render(); return; }
-        try {
-          const r = await invoke('companion_pair_poll');
-          if (r.status === 'approved') { clearInterval(state.pollTimer); await signedIn(r.session); }
-          else if (r.status !== 'pending') { clearInterval(state.pollTimer); state.connect = { phase: 'error', message: r.status === 'denied' ? 'Not approved. Nothing was signed in.' : 'The code expired. Start again when you’re ready.' }; render(); }
-        } catch (e) { const f = failure(e); if (!f.offline) { clearInterval(state.pollTimer); state.connect = { phase: f.gate ? 'gate' : 'error', message: f.message }; render(); } }
-      }, Math.max(2, started.interval ?? 3) * 1000);
+      waitForApproval(started);
     } catch (e) { const f = failure(e); state.connect = { phase: f.gate ? 'gate' : 'error', message: f.message }; render(); }
   },
   onOpenUrl() { if (state.connect.code) void invoke('open_in_browser', { path: `/connect?code=${state.connect.code}` }); },
-  onCancel() { clearInterval(state.pollTimer); void invoke('companion_pair_cancel'); state.connect = { phase: 'start' }; render(); },
+  onCancel() { state.stopPoll(); void invoke('companion_pair_cancel'); state.connect = { phase: 'start' }; render(); },
   onPasswordStart() { state.connect = { phase: 'password' }; render(); root.querySelector('input')?.focus(); },
   async onPassword({ username, password, code }) {
     state.connect = { ...state.connect, busy: true, message: 'Signing in…' }; render();
     try {
-      const r = await invoke('companion_password', { base: state.session?.base ?? 'https://pulse.estateautopilots.com/api/native/v0', username, password, code: code || null });
+      const r = await invoke('companion_password', { base: state.session?.base, username, password, code: code || null });
       if (r.twoStep) { state.connect = { phase: 'password', twoStep: true, message: 'Enter the code from your authenticator app.' }; render(); return; }
       await signedIn(r);
     } catch (e) { const f = failure(e); state.connect = { phase: f.gate ? 'gate' : 'password', twoStep: state.connect.twoStep, message: f.message }; render(); }
   },
   onDemo() { state.demo = demoClient('out'); state.screen = 'day'; communications.snapshot(demoSnapshot()); void refresh(); },
 };
+const addressHandlers = {
+  async onSave(value) {
+    state.address = { value, busy: true }; render();
+    try { state.session = await saveAddress(invoke, value); state.address = {}; state.connect = { phase: 'start' }; }
+    catch (e) { state.address = { value, message: e.message }; }
+    render();
+  },
+};
+function waitForApproval(pairing) {
+  state.stopPoll();
+  state.stopPoll = follow(invoke, pairing, (connect) => { state.connect = connect; render(); }, (session) => void signedIn(session));
+}
+/** After a restart, a computer that waits for its admin keeps waiting (up to a day; the shell keeps the request). */
+function resumeWait(session) {
+  if (session.signedIn || !session.awaitingAdmin || state.demo) return;
+  state.screen = 'connect'; state.connect = { phase: 'awaiting', code: session.awaitingAdmin.code, message: ADMIN_WAIT };
+  waitForApproval(session.awaitingAdmin);
+}
 async function signedIn(session) {
   updates.reset();
   state.session = session; restoreAttendance(session); state.demo = null; state.screen = 'day'; state.connect = { phase: 'start' };
@@ -311,6 +328,7 @@ async function boot() {
   if (!state.session.restoring) restoreAttendance(state.session);
   state.screen = state.session.signedIn ? 'day' : 'connect';
   if (!state.session.signedIn && state.session.notice) state.connect = { phase: 'start', message: state.session.notice };
+  if (!state.session.restoring) resumeWait(state.session);
   render();
   // A rendered, protected session-loading screen is healthy while saved credentials are restored.
   await invoke('update_healthy').catch(() => {});
@@ -328,6 +346,7 @@ async function boot() {
   void listen('pulse:prefs', () => { state.prefs = prefsWith(store.get('prefs', {})); applyTheme(); panel.reset(); render(); });
   void listen('pulse:signed-in', async () => { const s = await invoke('companion_session'); if (s.signedIn && s.deviceId !== state.session?.deviceId) await signedIn(s); });
   void listen('pulse:signed-out', async () => { state.session = await invoke('companion_session'); if (!state.session.signedIn) { restoreAttendance(state.session); state.payload = null; state.screen = 'connect'; render(); tray(); } });
+  void listen('pulse:address', async () => { const s = await invoke('companion_session'); if (!s.signedIn) { state.stopPoll(); state.session = s; restoreAttendance(s); state.payload = null; state.screen = 'connect'; state.connect = { phase: 'start' }; render(); tray(); } });
   void listen('pulse:presence', () => void refresh());
   void listen('pulse:install-update', () => void installUpdate());
   void listen('pulse:request-update-state', () => updateUi());
@@ -358,6 +377,7 @@ async function finishSessionRestore() {
     updates.reset(); updates.laterUntil = store.get('updateLater', 0);
     state.session = session; restoreAttendance(session); state.screen = session.signedIn ? 'day' : 'connect';
     if (!session.signedIn && session.notice) state.connect = { phase: 'start', message: session.notice };
+    resumeWait(session);
     render(); await refresh(); void updates.poll(updateContext());
   } catch { if (state.session?.restoring) setTimeout(() => void finishSessionRestore(), 1000); }
 }

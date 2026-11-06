@@ -3,6 +3,8 @@
 import { prefsWith, pipSvg } from './companion/index.js';
 import { PING_TYPES, glyph, initials } from './companion/communications.js';
 import { applyTheme, store } from './prefs.js';
+import { EXAMPLE, addressHost, saveAddress } from './address.js';
+import { learnCompany } from './pairing.js';
 
 const invoke = (cmd, args) => window.__TAURI__.core.invoke(cmd, args);
 const emit = (name, payload) => { try { return window.__TAURI__.event?.emit(name, payload)?.catch?.(() => {}); } catch { return null; } };
@@ -191,20 +193,47 @@ async function privacy() {
 // ------------------------------------------------------------------------------------------------ Account
 async function account() {
   const s = page('Account');
-  const signedIn = !!state.session?.signedIn;
+  const signedIn = !!state.session?.signedIn, host = addressHost(state.session?.site), company = state.session?.company;
+  void learnCompany(invoke, state.session).then((name) => { if (name && state.section === 'account') void go('account'); });
   const who = el('div', 'account');
   const avatar = el('div', 'avatar', initials(state.session?.personName || 'Pulse'));
-  const text = el('div'); text.append(el('strong', '', signedIn ? state.session.personName || 'Your Pulse account' : 'Not signed in'), el('span', '', signedIn ? `Signed in on this ${mac() ? 'Mac' : 'computer'} · ${new URL(state.session.site ?? 'https://pulse.estateautopilots.com').host}` : 'Sign in with your Pulse account; you approve it in your browser.'));
+  const text = el('div'); text.append(el('strong', '', signedIn ? state.session.personName || 'Your Pulse account' : 'Not signed in'), el('span', '', signedIn ? `Signed in on this ${mac() ? 'Mac' : 'computer'} · ${company || host}` : 'Sign in with your Pulse account; you approve it in your browser.'));
   who.append(avatar, text);
   const c = el('div', 'card'); c.append(who); const g = el('div', 'group'); g.append(c); s.append(g);
   if (signedIn) {
-    s.append(group(null,
+    s.append(group(null, addressRow(signedIn, host, company),
       row('Your devices', 'Every computer and phone signed in to Pulse. Remove any you no longer use.', button('Open', () => void invoke('open_app', { path: '/settings?tab=devices' }))),
       row('Password and two-step sign-in', 'Change your password and see where you are signed in.', button('Open', () => void invoke('open_app', { path: '/account' }))),
       row(`Sign out of this ${mac() ? 'Mac' : 'computer'}`, 'Removes this computer’s access. Your work and history stay in Pulse.', button('Sign out', async () => { if (!await ask('Sign out of this computer?', 'Pulse stops checking you in and pinging you here until you sign in again. Your work and history stay in Pulse.', 'Sign out')) return; state.session = await invoke('companion_sign_out'); toast('Signed out of this computer.'); void go('account'); }, 'btn danger')),
     ));
-  } else s.append(group(null, row('Sign in', 'Opens the Pulse window to connect this computer.', button('Sign in', () => void invoke('open_app', { path: null }), 'btn primary'))));
+  } else s.append(group(null, addressRow(signedIn, host, company), row('Sign in', 'Opens the Pulse window to connect this computer.', button('Sign in', () => void invoke('open_app', { path: null }), 'btn primary'))));
   return s;
+}
+
+/** The company's Pulse address. Changing it while signed in asks first: a different server signs this computer out. */
+function addressRow(signedIn, host, company) {
+  const r = row('Pulse address', host ? [company, host].filter(Boolean).join(' · ') : 'Not set yet. Pulse asks for it before you sign in.', button('Change', async () => {
+    if (signedIn && !await ask('Change the Pulse address?', `Saving a different address signs this ${mac() ? 'Mac' : 'computer'} out of ${host}. Check-ins and activity not yet sent there are dropped; your work and history stay in Pulse.`, 'Continue')) return;
+    r.replaceWith(addressForm(host));
+  }));
+  r.dataset.address = '';
+  return r;
+}
+function addressForm(host) {
+  const form = el('form', 'row address-form'), text = el('div', 'text'), label = el('label', 'label', 'Pulse address'), input = el('input'), hint = el('span', 'hint', `The address your company uses for Pulse, like ${EXAMPLE}`);
+  Object.assign(input, { id: 'pulse-address', name: 'address', type: 'text', inputMode: 'url', autocomplete: 'url', spellcheck: false, placeholder: EXAMPLE, value: host ? `https://${host}` : '' });
+  label.htmlFor = input.id; hint.id = 'pulse-address-hint'; input.setAttribute('aria-describedby', hint.id); input.setAttribute('autocapitalize', 'off');
+  text.append(label, input, hint);
+  const save = el('button', 'btn primary', 'Save'); save.type = 'submit';
+  const controls = el('div', 'address-actions'); controls.append(save, button('Cancel', () => void go('account')));
+  form.append(text, controls);
+  form.addEventListener('submit', async (e) => {
+    e.preventDefault(); save.disabled = true; hint.textContent = 'Checking that this is your Pulse…'; hint.removeAttribute('role'); delete hint.dataset.tone;
+    try { state.session = await saveAddress(invoke, input.value); toast(`Pulse address saved: ${addressHost(state.session?.site)}`); void go('account'); }
+    catch (err) { hint.textContent = err.message; hint.setAttribute('role', 'alert'); hint.dataset.tone = 'warn'; input.setAttribute('aria-invalid', 'true'); save.disabled = false; input.focus(); }
+  });
+  requestAnimationFrame(() => input.focus());
+  return form;
 }
 
 // ------------------------------------------------------------------------------------------------ Updates & about

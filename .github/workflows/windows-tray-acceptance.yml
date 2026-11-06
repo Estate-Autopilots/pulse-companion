@@ -39,6 +39,7 @@ jobs:
           $binary = 'C:\PulseAcceptance\pulse-desktop.exe'
           if (-not (Test-Path $binary)) { throw 'Installed executable missing' }
           $env:PULSE_ACCEPTANCE_DIR = (Resolve-Path screens).Path
+          $env:PULSE_ACCEPTANCE_ADDRESS = 'https://pulse.estateautopilots.com'
           Start-Process $binary -ArgumentList '--admission-acceptance' -Wait
           $admission = (Get-Content screens/admission.json -Raw | ConvertFrom-Json).result.Ok
           if (-not $admission.readDenied -or -not $admission.refreshDenied -or -not $admission.signedOutOnly) { throw 'Installed native HTTPS admission failed' }

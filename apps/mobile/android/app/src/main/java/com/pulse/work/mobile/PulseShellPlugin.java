@@ -14,6 +14,8 @@ import android.os.Build;
 import android.os.CancellationSignal;
 import android.os.Handler;
 import android.os.Looper;
+import android.os.Process;
+import android.os.SystemClock;
 import android.provider.Settings;
 import android.util.Base64;
 import androidx.browser.customtabs.CustomTabColorSchemeParams;
@@ -56,6 +58,7 @@ public class PulseShellPlugin extends Plugin {
     public void load() {
         Shell.init(getContext());
         Notifier.channels(getContext());
+        CallPush.register(getContext());
     }
 
     /** Links outside Pulse open in a Custom Tab (sign-in providers included), never inside the app's WebView. */
@@ -103,6 +106,8 @@ public class PulseShellPlugin extends Plugin {
         r.put("notificationsAsk", notificationsAsk(c));
         r.put("pushReady", firebaseReady());
         r.put("pushActive", pushActive(c));
+        // PERF: how long this app process has run, so the page can time a cold start from the tap (telemetry app.start).
+        r.put("processAgeMs", SystemClock.elapsedRealtime() - Process.getStartElapsedRealtime());
         call.resolve(r);
     }
 
@@ -167,6 +172,7 @@ public class PulseShellPlugin extends Plugin {
                         pairing = null;
                         InboxWorker.schedule(getContext());
                         OfficeArrival.sync(getContext());
+                        CallPush.register(getContext());
                         health();
                         JSObject out = new JSObject();
                         out.put("deviceId", r.getString("deviceId"));
@@ -211,6 +217,7 @@ public class PulseShellPlugin extends Plugin {
             } catch (Exception ignored) {
                 // Already revoked by the web sign-out, or offline: the server ends it with the session anyway.
             }
+            CallPush.unregister(c);
             Gateway.forget(c);
             OfficeArrival.stop(c);
             Notifier.badge(c, 0);
@@ -241,6 +248,76 @@ public class PulseShellPlugin extends Plugin {
     @PluginMethod
     public void checkInbox(PluginCall call) {
         if (ShellStore.enrolled(getContext())) InboxWorker.runNow(getContext());
+        call.resolve();
+    }
+
+    /** CHAT-VOICE: in a call, the loudspeaker or the earpiece (a web view starts calls on the earpiece). */
+    @PluginMethod
+    public void setSpeaker(PluginCall call) {
+        boolean on = Boolean.TRUE.equals(call.getBoolean("on", true));
+        android.media.AudioManager audio = (android.media.AudioManager) getContext().getSystemService(Context.AUDIO_SERVICE);
+        if (audio == null) { call.resolve(); return; }
+        if (Build.VERSION.SDK_INT >= 31) {
+            if (on) {
+                for (android.media.AudioDeviceInfo d : audio.getAvailableCommunicationDevices())
+                    if (d.getType() == android.media.AudioDeviceInfo.TYPE_BUILTIN_SPEAKER) { audio.setCommunicationDevice(d); break; }
+            } else audio.clearCommunicationDevice();
+        } else {
+            audio.setMode(android.media.AudioManager.MODE_IN_COMMUNICATION);
+            audio.setSpeakerphoneOn(on);
+        }
+        JSObject result = new JSObject(); result.put("on", on); call.resolve(result);
+    }
+
+    /** CALLS-NATIVE: will a call ring here with Pulse closed? Settings → Devices → Calls ring shows each check. */
+    @PluginMethod
+    public void callReadiness(PluginCall call) {
+        Context c = getContext();
+        JSObject r = new JSObject();
+        r.put("notifications", Notifier.enabled(c));
+        r.put("fullScreen", CallRinger.fullScreenAllowed(c));
+        r.put("channel", CallRinger.channelState(c));
+        String battery = "unknown";
+        android.os.PowerManager pm = (android.os.PowerManager) c.getSystemService(Context.POWER_SERVICE);
+        if (pm != null) battery = pm.isIgnoringBatteryOptimizations(c.getPackageName()) ? "ok" : "restricted";
+        r.put("battery", battery);
+        boolean registered = ShellStore.plain(c, "push") != null;
+        r.put("push", !firebaseReady() ? "no-push" : registered ? "ready" : "waiting");
+        if (firebaseReady() && !registered) CallPush.register(c);
+        call.resolve(r);
+    }
+
+    /** CALLS-NATIVE: the one Android settings screen that fixes a ringing check. */
+    @PluginMethod
+    public void openCallSettings(PluginCall call) {
+        Context c = getContext();
+        String what = call.getString("what", "notifications");
+        String pkg = c.getPackageName();
+        Intent intent;
+        if ("fullscreen".equals(what) && Build.VERSION.SDK_INT >= 34) {
+            intent = new Intent(Settings.ACTION_MANAGE_APP_USE_FULL_SCREEN_INTENT, Uri.parse("package:" + pkg));
+        } else if ("channel".equals(what) && Build.VERSION.SDK_INT >= 26) {
+            intent = new Intent(Settings.ACTION_CHANNEL_NOTIFICATION_SETTINGS).putExtra(Settings.EXTRA_APP_PACKAGE, pkg).putExtra(Settings.EXTRA_CHANNEL_ID, Notifier.CALLS);
+        } else if ("battery".equals(what)) {
+            intent = new Intent(Settings.ACTION_IGNORE_BATTERY_OPTIMIZATION_SETTINGS);
+        } else if (Build.VERSION.SDK_INT >= 26) {
+            intent = new Intent(Settings.ACTION_APP_NOTIFICATION_SETTINGS).putExtra(Settings.EXTRA_APP_PACKAGE, pkg);
+        } else {
+            intent = new Intent(Settings.ACTION_APPLICATION_DETAILS_SETTINGS, Uri.parse("package:" + pkg));
+        }
+        try {
+            getActivity().startActivity(intent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK));
+        } catch (ActivityNotFoundException e) {
+            getActivity().startActivity(new Intent(Settings.ACTION_APPLICATION_DETAILS_SETTINGS, Uri.parse("package:" + pkg)).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK));
+        }
+        call.resolve();
+    }
+
+    /** CALLS-NATIVE: a call is on (Pulse stays above the lock screen when answered from it) or over. */
+    @PluginMethod
+    public void setInCall(PluginCall call) {
+        boolean on = Boolean.TRUE.equals(call.getBoolean("on", false));
+        if (getActivity() instanceof MainActivity) ((MainActivity) getActivity()).inCall(on);
         call.resolve();
     }
 
@@ -394,6 +471,14 @@ public class PulseShellPlugin extends Plugin {
     public void checkUpdate(PluginCall call) {
         WORK.execute(() -> {
             try {
+                if (Updater.storeManaged(getContext())) {
+                    JSObject r = new JSObject();
+                    r.put("current", Shell.version());
+                    r.put("available", false);
+                    r.put("store", "play");
+                    call.resolve(r);
+                    return;
+                }
                 JSONObject c = Updater.candidate();
                 JSObject r = new JSObject();
                 r.put("current", Shell.version());
@@ -414,7 +499,7 @@ public class PulseShellPlugin extends Plugin {
     public void downloadUpdate(PluginCall call) {
         WORK.execute(() -> {
             try {
-                JSONObject c = Updater.candidate();
+                JSONObject c = Updater.storeManaged(getContext()) ? null : Updater.candidate();
                 if (c == null || !c.optBoolean("available")) {
                     call.reject("Pulse is up to date.", "none");
                     return;
@@ -476,6 +561,12 @@ public class PulseShellPlugin extends Plugin {
     /** A file the page generated itself (an export): keep it privately and open or share it. */
     @PluginMethod
     public void saveFile(PluginCall call) {
+        if (call.getBoolean("failed", false)) {
+            // EST-1742: a page-made blob: download that failed in the page (ShellDownloads) is said, not swallowed.
+            ShellDownloads.failed(getActivity(), "page file: blob not saved");
+            call.reject("Pulse could not save the file.", "save");
+            return;
+        }
         String name = call.getString("name", "Pulse download");
         String mime = call.getString("mime", "application/octet-stream");
         String data = call.getString("base64", "");

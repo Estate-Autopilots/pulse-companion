@@ -7,11 +7,12 @@ export const BRAND = {
   canvas: '#f6f6fa', night: '#121219', live: '#3ddc97',
 };
 
-/** The chosen mark, "Pulse point": an open P whose bowl holds the live point (32 × 32 grid, 3.4 stroke). */
+/** The chosen mark, "Ripple" (owner, 20 Oct 2026): a live point and the pulse spreading from it in two rings, no letter.
+ *  32 × 32 grid, 3.6 stroke, optically centred on the tile; `stroke` is both rings so every renderer stays one path. */
 export const MARK = {
-  stroke: 'M10 25.6V12.6a6 6 0 1 1 6 6h-1.4',
-  point: { cx: 16, cy: 12.6, r: 2 },
-  width: 3.4,
+  stroke: 'M8.9 13.2A9.9 9.9 0 0 1 18.8 23.1M8.9 6.2A16.9 16.9 0 0 1 25.8 23.1',
+  point: { cx: 8.9, cy: 23.1, r: 4.4 },
+  width: 3.6,
 };
 
 /** "Pulse" in Inter at weight 640, tracked −2 %, as outlines (units: 2048 per em; cap height 1490). */
@@ -46,8 +47,8 @@ export const DIRECTIONS = [
     verdict: 'Clean at any size, but abstract dots say “loading” as often as “growth”, and nothing in it is Pulse’s alone.' },
 ];
 /** The mark in use today ("Pulse point", UX-NOTIFY): app icons and favicons keep it until the owner picks a direction. */
-export const LIVE = { id: 'point', name: 'Pulse point', glyph: (c) => markGlyph(c),
-  idea: 'An open P whose bowl holds the live point.', verdict: 'In use since 10 Oct 2026. The owner found it weak; it stays only until a direction above is chosen.' };
+export const LIVE = { id: 'point', name: 'Ripple', glyph: (c) => markGlyph(c),
+  idea: 'A live point and the pulse spreading from it through the company.', verdict: 'Chosen by the owner on 20 Oct 2026 over Orbit, Beat and Blink: no letter, holds at 16 px, the rings can breathe as the live state.' };
 
 /** The chosen glyph in one colour (no tile): for mono, tray template and notification icons. */
 export function markGlyph(color = BRAND.iris) {

@@ -35,7 +35,7 @@ await writeFile('release/latest.json', JSON.stringify(manifest, null, 2) + '\n')
 const sums = []; for (const f of await readdir('release')) sums.push(`${createHash('sha256').update(await readFile(join('release', f))).digest('hex')}  ${f}`);
 await writeFile('release/SHA256SUMS.txt', sums.sort().join('\n') + '\n');
 await writeFile('release-notes.md', `${manifest.notes}\n\nDesktop-only release. Android remains on its existing channel and version. Desktop updater bundles are signed; Windows distribution signing and macOS notarisation remain separate.\n`);
-gh('release', 'create', tag, '-R', repo, '--target', commit, '--title', `Pulse Desktop ${version}`, '--notes-file', 'release-notes.md', '--prerelease', ...(await readdir('release')).map(f => join('release', f)));
+gh('release', 'create', tag, '-R', repo, '--target', commit, '--title', `Pulse Desktop ${version}`, '--notes-file', 'release-notes.md', ...(await readdir('release')).map(f => join('release', f)));
 await copyFile('release/latest.json', 'release/latest-desktop.json');
 // Prove the original Android channel manifest stayed byte-identical across publication.
 const androidBefore = gh('release', 'download', 'companion-test', '-R', repo, '--pattern', 'latest.json', '--output', '-');

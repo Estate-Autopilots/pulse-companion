@@ -17,6 +17,9 @@ import java.io.File;
 /**
  * Uploads: an image field offers the camera next to Photos and Files in one chooser. The camera app takes the
  * picture, so Pulse never asks for camera permission. Other fields use Capacitor's file picker.
+ * POLISH-2 (QA-E2E P1-15): WebView's own picker intent asks only for the field's first type, so a field accepting
+ * "application/pdf,image/*" (ID documents, task proof) offered Files with PDFs and no gallery. The picker now asks for
+ * every accepted type, so a photo already in the gallery can be chosen there too.
  */
 final class ShellChromeClient extends BridgeWebChromeClient {
 
@@ -29,10 +32,22 @@ final class ShellChromeClient extends BridgeWebChromeClient {
     }
 
     private static boolean acceptsImages(FileChooserParams params) {
-        String[] types = params.getAcceptTypes();
-        if (types == null || types.length == 0) return true;
-        for (String t : types) if (t == null || t.isEmpty() || "*/*".equals(t) || t.startsWith("image/")) return true;
+        String[] types = UploadTypes.mimeTypes(params.getAcceptTypes());
+        if (types.length == 0) return true;
+        for (String t : types) if (t.startsWith("image/")) return true;
         return false;
+    }
+
+    /** Files, Photos and the gallery for every accepted type: one type sets it, several go in EXTRA_MIME_TYPES. */
+    static Intent pickIntent(String[] accept) {
+        String[] types = UploadTypes.mimeTypes(accept);
+        Intent pick = new Intent(Intent.ACTION_GET_CONTENT).addCategory(Intent.CATEGORY_OPENABLE);
+        if (types.length == 1) pick.setType(types[0]);
+        else {
+            pick.setType("*/*");
+            if (types.length > 1) pick.putExtra(Intent.EXTRA_MIME_TYPES, types);
+        }
+        return pick;
     }
 
     @Override
@@ -40,7 +55,7 @@ final class ShellChromeClient extends BridgeWebChromeClient {
         if (params.isCaptureEnabled() || !acceptsImages(params)) return super.onShowFileChooser(webView, callback, params);
         if (pending != null) pending.onReceiveValue(null);
         pending = callback;
-        Intent pick = params.createIntent();
+        Intent pick = pickIntent(params.getAcceptTypes());
         if (params.getMode() == FileChooserParams.MODE_OPEN_MULTIPLE) pick.putExtra(Intent.EXTRA_ALLOW_MULTIPLE, true);
         Intent chooser = Intent.createChooser(pick, "Add a photo or file");
         Uri photo = null;

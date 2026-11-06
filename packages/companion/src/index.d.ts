@@ -1,11 +1,13 @@
 // Types for @pulse/companion (the implementation is plain ESM so desktop and Chrome can load it without a build).
 
 export type CompanionState = 'out' | 'in' | 'break' | 'done' | 'leave' | 'holiday' | 'off';
-export type Mood = 'idle' | 'listening' | 'thinking' | 'new-message' | 'happy' | 'concerned' | 'sleeping' | 'waking' | 'in' | 'break' | 'done' | 'celebrate' | 'sleepy';
+export type Mood = 'idle' | 'listening' | 'thinking' | 'speaking' | 'new-message' | 'happy' | 'concerned' | 'sleeping' | 'waking' | 'in' | 'break' | 'done' | 'celebrate' | 'sleepy';
 export type ActionId = 'check-in' | 'break-start' | 'break-end' | 'check-out';
 export type Mode = 'office' | 'wfh' | 'field';
 
 export type CompanionEntry = { id: string | null; date: string; in: string; out: string | null; mode: string; late: number; onBreak: boolean; breakStartedAt: string | null; closedBreakSeconds: number; synced?: string | null;
+  /** ATT: "auto" when Pulse checked in or out by itself (with why it checked out), "answer" when the person's one tap did. */
+  inVia?: string | null; outVia?: string | null; outReason?: string | null;
   /** POLISH-1: the person sent the time they left for this open session (a correction waiting for approval). */
   correctionPending?: boolean };
 export type Office = { id: string; name: string; lat: number; lng: number; radius: number; wifi: { ssid: string; bssids: string[] }[] };
@@ -21,9 +23,13 @@ export type CompanionPayload = {
   upcoming?: { date: string; start: string; startsAt: string }[];
   streak: { onTime: number; firstCheckIn: boolean };
   waiting: { count: number; href: string } | null;
-  presence: { dwellMinutes?:number; leaveMinutes?:number; autoCheckIn: boolean; offices: Office[]; sites: Site[] };
+  presence: { dwellMinutes?:number; leaveMinutes?:number; autoCheckIn: boolean; /** ATT: Pulse checks out by itself when someone leaves. */ autoCheckOut?: boolean; offices: Office[]; sites: Site[] };
   /** PRESENCE-ONBOARD: Pulse noticed the person at an office and asked "Check in?" (until they answer). */
   arrival?: { at: string; office: string | null } | null;
+  /** POLISH-2: a session Pulse closed for review because nobody checked out (the time they left is still to send). */
+  unresolved?: { entryId: string; date: string; in: string; proposedEnd: string; reason: string; correctionPending: boolean } | null;
+  /** ATT: Pulse's one question about the open session (the signals conflict), until it is answered. */
+  question?: { entryId: string; kind: 'left' | 'left_early'; leftAt: string; askedAt: string; office: string | null } | null;
   /** This week's working days so far: on time, late, missed or not a working day. */
   week?: { onTime: number; late: number; missed: number; days: { date: string; state: 'on_time' | 'late' | 'missed' | 'off' | 'today' }[] } | null;
 };
@@ -110,7 +116,7 @@ export const PIP_MOODS: Mood[];
 export const PIP_LABELS: Record<Mood, string>;
 export const PIP_BULB: Record<Mood, string>;
 export const PIP_COLORS: Record<'light' | 'dark', Record<string, string>>;
-export const PIP_PATHS: { body: string; shine: string; eyesHappy: string[]; eyesClosed: string[]; brows: string[]; star: string; smile: string; grin: string; flat: string; wobble: string; cup: string; cupHandle: string; steam: string[]; z: string; confetti: [number, number, string][] };
+export const PIP_PATHS: { body: { cx: number; cy: number; r: number }; arcs: string[]; shine: string; eyesOpen: [number, number][]; eyesHappy: string[]; eyesClosed: string[]; brows: string[]; star: string; cup: string; cupHandle: string; steam: string[]; z: string; confetti: [number, number, string][] };
 export function pipFace(mood: Mood): { eyes: 'open' | 'happy' | 'closed' | 'star'; mouth: 'smile' | 'grin' | 'o' | 'flat' | 'wobble' | 'none'; cheeks: boolean; brows: boolean; cup: boolean; zzz: boolean; confetti: boolean; wave: boolean; dots: boolean; rings: boolean; bulb: string };
 export function pipSvg(options?: { mood?: Mood; size?: number; label?: string; still?: boolean; uid?: string }): string;
 export function pipStaticSvg(options?: { mood?: Mood; theme?: 'light' | 'dark'; size?: number; blink?: boolean }): string;

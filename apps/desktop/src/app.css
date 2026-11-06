@@ -17,5 +17,6 @@ html, body { height: 100%; margin: 0; overflow: hidden; background: #f6f6fa; }
 .app-text, .app-card .pc-sub { max-width: 340px; margin: 0 auto; font-size: 14px; line-height: 1.5; }
 .app-card .pc-actions { width: 100%; margin-top: 8px; }
 .app-card .pc-code { width: 100%; }
+.app-card .pc-form { width: 100%; text-align: left; }
 .app-card .pc-status { text-align: center; }
 @media (prefers-reduced-motion: reduce) { .app-card { animation: none; } }

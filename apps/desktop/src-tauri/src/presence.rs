@@ -2,6 +2,7 @@
 //! point only) to the same presence endpoint phones use; Pulse's gateway adds whether the request came from the
 //! office public IP. The server applies triangulation and dwell confirmation, HR policy and the person's own
 //! auto-check-in choice. Nothing is sent while the opt-in is off; no location, history or other networks are read.
+//! ATT: each report also says whether the laptop was in use in the last five minutes (yes/no only).
 use crate::companion::Companion;
 use pulse_desktop_core::wifi::{self, Wifi};
 use serde::{Deserialize, Serialize};
@@ -60,8 +61,11 @@ pub fn current_wifi() -> Wifi {
 }
 
 fn send(app: &AppHandle, device: &str, c: Choice, w: &Wifi) -> Result<Value, String> {
+    // ATT: whether someone used this laptop in the last five minutes (a yes or no, never what they did): with the Wi-Fi it
+    // tells "still at the desk" from "the laptop went home and is busy there".
+    let active = pulse_desktop_core::sensors::idle_seconds().map(|idle| idle < 300);
     let body = if c.consent {
-        json!({"consent": true, "autoConsent": c.auto_consent, "wifi": {"ssid": w.ssid, "bssid": w.bssid}})
+        json!({"consent": true, "autoConsent": c.auto_consent, "wifi": {"ssid": w.ssid, "bssid": w.bssid}, "active": active})
     } else {
         json!({"consent": false, "autoConsent": false})
     };

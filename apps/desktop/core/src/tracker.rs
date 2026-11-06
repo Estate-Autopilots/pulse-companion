@@ -958,6 +958,31 @@ mod tests {
         fs::remove_file(path).unwrap();
     }
     #[test]
+    fn changing_the_server_clears_the_session_and_the_queue() {
+        let path = std::env::temp_dir().join(format!("pulse-{}.bin", uuid::Uuid::new_v4()));
+        let t = Tracker::with_key(path.clone(), [7; 32]).unwrap();
+        {
+            let mut r = t.runtime.lock().unwrap();
+            r.store.settings.purposes = vec!["work_evidence".into()];
+            r.store.settings.receipts.insert("work_evidence".into(), "synthetic-receipt".into());
+            Tracker::enqueue(&mut r, "render", "work_evidence", json!({})).unwrap();
+        }
+        let (old, new) = ("https://old.example.com/api/native/v0", "https://new.example.com/api/native/v0");
+        let address = crate::server::SavedAddress::default();
+        address.open(path.with_extension("address"));
+        address.set(old).unwrap();
+        let session = crate::startup::DeferredCredentials::<String>::default();
+        session.finish_restore(Some(old.into()));
+        let signed_in = session.lock().unwrap().clone();
+        let changed = address.switch(new, signed_in.as_deref(), || { t.sign_out().unwrap(); session.lock().unwrap().take(); }).unwrap();
+        assert!(changed);
+        assert!(session.lock().unwrap().is_none(), "the old server's sign-in is gone");
+        assert!(t.runtime.lock().unwrap().store.outbox.is_empty(), "the old server's queued work is dropped");
+        assert_eq!(address.get().as_deref(), Some(new));
+        fs::remove_file(path.with_extension("address")).unwrap();
+        fs::remove_file(path).unwrap();
+    }
+    #[test]
     fn encrypted_queue_survives_restart_and_pause() {
         let path = std::env::temp_dir().join(format!("pulse-{}.bin", uuid::Uuid::new_v4()));
         let key = [7; 32];

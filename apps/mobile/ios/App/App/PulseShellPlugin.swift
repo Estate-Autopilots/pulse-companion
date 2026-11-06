@@ -1,6 +1,9 @@
+import AVFoundation
+import CallKit
 import Capacitor
 import CoreLocation
 import Foundation
+import PushKit
 import SafariServices
 import Security
 import UIKit
@@ -11,6 +14,8 @@ import UserNotifications
 class ShellViewController: CAPBridgeViewController {
     override open func capacitorDidLoad() {
         bridge?.registerPluginInstance(PulseShellPlugin())
+        // CALLS-NATIVE: an answered call opens here (also one answered before this screen existed).
+        PulseCalls.shared.attach(bridge)
         webView?.allowsBackForwardNavigationGestures = true
         webView?.allowsLinkPreview = false
         webView?.scrollView.contentInsetAdjustmentBehavior = .never
@@ -32,6 +37,7 @@ public class PulseShellPlugin: CAPPlugin, CAPBridgedPlugin, CLLocationManagerDel
         CAPPluginMethod(name: "checkInbox", returnType: CAPPluginReturnPromise),
         CAPPluginMethod(name: "requestNotifications", returnType: CAPPluginReturnPromise),
         CAPPluginMethod(name: "setBadge", returnType: CAPPluginReturnPromise),
+        CAPPluginMethod(name: "setSpeaker", returnType: CAPPluginReturnPromise),
         CAPPluginMethod(name: "setTheme", returnType: CAPPluginReturnPromise),
         CAPPluginMethod(name: "setPushToken", returnType: CAPPluginReturnPromise),
         CAPPluginMethod(name: "presencePreferences", returnType: CAPPluginReturnPromise),
@@ -47,17 +53,15 @@ public class PulseShellPlugin: CAPPlugin, CAPBridgedPlugin, CLLocationManagerDel
         // POLISH-1: Capacitor dispatches its permission methods only when listed (else the page's promise never settles).
         CAPPluginMethod(name: "checkPermissions", returnType: CAPPluginReturnPromise),
         CAPPluginMethod(name: "requestPermissions", returnType: CAPPluginReturnPromise),
+        // CALLS-NATIVE: kept in step with PulseShellPlugin.java and native-shell.ts.
+        CAPPluginMethod(name: "callReadiness", returnType: CAPPluginReturnPromise),
+        CAPPluginMethod(name: "openCallSettings", returnType: CAPPluginReturnPromise),
+        CAPPluginMethod(name: "setInCall", returnType: CAPPluginReturnPromise),
     ]
 
-    static let base = "https://pulse.estateautopilots.com/api/native/v0/"
+    static let base = ShellGateway.base
     private var pairing: [String: Any]?
     private var pairingAt = Date.distantPast
-    private var access: String?
-    private var accessUntil = Date.distantPast
-    private let credentialLock = NSLock()
-    private var credentialGeneration = 0
-    private var refreshing = false
-    private var tokenWaiters: [(String?) -> Void] = []
     private var locator: CLLocationManager?
     /// PRESENCE-ONBOARD: iOS watches circular regions around the person's offices (with "Always", asked on a tap).
     private var regions: CLLocationManager?
@@ -65,26 +69,14 @@ public class PulseShellPlugin: CAPPlugin, CAPBridgedPlugin, CLLocationManagerDel
     private var locationTimeout: DispatchWorkItem?
     private var permissionCall: CAPPluginCall?
 
-    // MARK: Keychain (this device only, readable after the first unlock)
-    private let service = "com.pulse.work.mobile.shell"
-
-    private func keychainSet(_ key: String, _ value: String?) {
-        let query: [String: Any] = [kSecClass as String: kSecClassGenericPassword, kSecAttrService as String: service, kSecAttrAccount as String: key]
-        SecItemDelete(query as CFDictionary)
-        guard let value = value else { return }
-        var add = query
-        add[kSecValueData as String] = Data(value.utf8)
-        add[kSecAttrAccessible as String] = kSecAttrAccessibleAfterFirstUnlockThisDeviceOnly
-        SecItemAdd(add as CFDictionary, nil)
-    }
-
-    private func keychainGet(_ key: String) -> String? {
-        let query: [String: Any] = [kSecClass as String: kSecClassGenericPassword, kSecAttrService as String: service, kSecAttrAccount as String: key,
-                                    kSecReturnData as String: true, kSecMatchLimit as String: kSecMatchLimitOne]
-        var out: AnyObject?
-        guard SecItemCopyMatching(query as CFDictionary, &out) == errSecSuccess, let data = out as? Data else { return nil }
-        return String(data: data, encoding: .utf8)
-    }
+    // CALLS-NATIVE: the device credential lives in ShellGateway (below), shared with the call ringer, which can wake
+    // Pulse in the background before this plugin exists. Refresh tokens are single-use: one owner rotates them.
+    private var gw: ShellGateway { ShellGateway.shared }
+    private var credentialLock: NSLock { gw.lock }
+    private var access: String? { get { gw.access } set { gw.access = newValue } }
+    private var accessUntil: Date { get { gw.accessUntil } set { gw.accessUntil = newValue } }
+    private func keychainSet(_ key: String, _ value: String?) { gw.keychainSet(key, value) }
+    private func keychainGet(_ key: String) -> String? { gw.keychainGet(key) }
 
     /// JSON null for a missing value (an Optional inside Any is not a JavaScript value).
     private func orNull(_ value: String?) -> Any {
@@ -92,75 +84,15 @@ public class PulseShellPlugin: CAPPlugin, CAPBridgedPlugin, CLLocationManagerDel
         return NSNull()
     }
 
-    private var enrolled: Bool { keychainGet("refresh") != nil && keychainGet("device") != nil }
+    private var enrolled: Bool { gw.enrolled }
 
-    private var version: String { Bundle.main.infoDictionary?["CFBundleShortVersionString"] as? String ?? "1.1.2" }
+    private var version: String { ShellGateway.version }
 
-    // MARK: Gateway
     private func gateway(_ path: String, _ body: [String: Any]?, bearer: String? = nil, done: @escaping (Int, [String: Any]) -> Void) {
-        guard let url = URL(string: PulseShellPlugin.base + path) else { return done(0, [:]) }
-        var request = URLRequest(url: url, timeoutInterval: 20)
-        request.httpMethod = body == nil ? "GET" : "POST"
-        request.setValue("application/json", forHTTPHeaderField: "Accept")
-        request.setValue("PulseShell/\(version) (ios)", forHTTPHeaderField: "User-Agent")
-        if let bearer = bearer { request.setValue("Bearer \(bearer)", forHTTPHeaderField: "Authorization") }
-        if let body = body {
-            request.setValue("application/json", forHTTPHeaderField: "Content-Type")
-            request.httpBody = try? JSONSerialization.data(withJSONObject: body)
-        }
-        URLSession.shared.dataTask(with: request) { data, response, _ in
-            let status = (response as? HTTPURLResponse)?.statusCode ?? 0
-            let json = (data.flatMap { try? JSONSerialization.jsonObject(with: $0) } as? [String: Any]) ?? [:]
-            done(status, json)
-        }.resume()
+        gw.request(path, body, bearer: bearer, done: done)
     }
-
-    private func accessToken(_ done: @escaping (String?) -> Void) {
-        credentialLock.lock()
-        if let access = access, Date() < accessUntil.addingTimeInterval(-60) { credentialLock.unlock(); return done(access) }
-        guard let refresh = keychainGet("refresh") else { credentialLock.unlock(); return done(nil) }
-        tokenWaiters.append(done)
-        if refreshing { credentialLock.unlock(); return }
-        refreshing = true
-        let generation = credentialGeneration
-        credentialLock.unlock()
-        // Refresh credentials are single-use. Concurrent Settings/location calls share one rotation.
-        gateway("native/refresh", ["refreshToken": refresh]) { status, json in
-            self.credentialLock.lock()
-            // A sign-out or replacement enrollment must never be undone by an older refresh response.
-            guard generation == self.credentialGeneration else { self.credentialLock.unlock(); return }
-            var result: String?
-            if status == 200, let next = json["refreshToken"] as? String, let token = json["accessToken"] as? String {
-                self.keychainSet("refresh", next)
-                self.access = token
-                self.accessUntil = Date().addingTimeInterval(TimeInterval((json["expiresIn"] as? Int) ?? 900))
-                result = token
-            } else if status == 401 {
-                for key in ["refresh", "device", "person"] { self.keychainSet(key, nil) }
-                self.access = nil
-                self.accessUntil = .distantPast
-                self.credentialGeneration += 1
-            }
-            let waiters = self.tokenWaiters
-            self.tokenWaiters = []
-            self.refreshing = false
-            self.credentialLock.unlock()
-            waiters.forEach { $0(result) }
-        }
-    }
-
-    private func forget() {
-        credentialLock.lock()
-        for key in ["refresh", "device", "person"] { keychainSet(key, nil) }
-        access = nil
-        accessUntil = .distantPast
-        credentialGeneration += 1
-        refreshing = false
-        let waiters = tokenWaiters
-        tokenWaiters = []
-        credentialLock.unlock()
-        waiters.forEach { $0(nil) }
-    }
+    private func accessToken(_ done: @escaping (String?) -> Void) { gw.accessToken(done) }
+    private func forget() { gw.forget() }
 
     // MARK: Bridge
     @objc func info(_ call: CAPPluginCall) {
@@ -204,6 +136,8 @@ public class PulseShellPlugin: CAPPlugin, CAPBridgedPlugin, CLLocationManagerDel
                     self.accessUntil = Date().addingTimeInterval(840)
                     self.credentialLock.unlock()
                     self.pairing = nil
+                    // CALLS-NATIVE: this phone can now be rung: its VoIP token goes to Pulse for this device.
+                    PulseCalls.shared.registerToken()
                     return call.resolve(["deviceId": device])
                 }
                 if state == "pending", attempt < 6 {
@@ -258,6 +192,19 @@ public class PulseShellPlugin: CAPPlugin, CAPBridgedPlugin, CLLocationManagerDel
         call.resolve()
     }
 
+    /// CHAT-VOICE: a call's audio on the loudspeaker or the earpiece, as on Android (READY: the iPhone bridge lacked it).
+    @objc func setSpeaker(_ call: CAPPluginCall) {
+        let on = call.getBool("on") ?? true
+        let session = AVAudioSession.sharedInstance()
+        do {
+            try session.setCategory(.playAndRecord, mode: .voiceChat, options: [.allowBluetooth])
+            try session.overrideOutputAudioPort(on ? .speaker : .none)
+            call.resolve(["on": on])
+        } catch {
+            call.reject("The speaker could not be switched")
+        }
+    }
+
     @objc func setTheme(_ call: CAPPluginCall) {
         let dark = call.getBool("dark") ?? false
         DispatchQueue.main.async {
@@ -308,6 +255,8 @@ public class PulseShellPlugin: CAPPlugin, CAPBridgedPlugin, CLLocationManagerDel
             manager.delegate = self
             self.regions = manager
             if self.enrolled { self.monitorOffices() }
+            PulseCalls.shared.start()
+            PulseCalls.shared.registerToken()
         }
     }
 
@@ -469,6 +418,29 @@ public class PulseShellPlugin: CAPPlugin, CAPBridgedPlugin, CLLocationManagerDel
         finishLocation()
     }
 
+    // MARK: Calls (CALLS-NATIVE)
+    /// Will a call ring on this iPhone with Pulse closed? CallKit always shows full screen and rings with the system's
+    /// ringtone; what can be missing is notifications and the VoIP token reaching Pulse (needs the Apple account).
+    @objc func callReadiness(_ call: CAPPluginCall) {
+        UNUserNotificationCenter.current().getNotificationSettings { settings in
+            call.resolve([
+                "notifications": settings.authorizationStatus == .authorized,
+                "fullScreen": true, "channel": "on", "battery": "unknown",
+                "push": PulseCalls.shared.pushState(),
+            ])
+        }
+    }
+
+    @objc func openCallSettings(_ call: CAPPluginCall) {
+        DispatchQueue.main.async {
+            if let url = URL(string: UIApplication.openSettingsURLString) { UIApplication.shared.open(url) }
+            call.resolve()
+        }
+    }
+
+    /// CallKit keeps an answered call above the lock screen itself: nothing to do on iPhone.
+    @objc func setInCall(_ call: CAPPluginCall) { call.resolve() }
+
     /// iPhone apps update through TestFlight or the App Store, never by downloading an app file.
     @objc func checkUpdate(_ call: CAPPluginCall) { call.resolve(["available": false, "current": version]) }
     @objc func downloadUpdate(_ call: CAPPluginCall) { call.reject("Updates on iPhone come from TestFlight.", "unsupported") }
@@ -505,5 +477,311 @@ public class PulseShellPlugin: CAPPlugin, CAPBridgedPlugin, CLLocationManagerDel
             self.bridge?.viewController?.present(sheet, animated: true)
             call.resolve()
         }
+    }
+}
+
+/// Pulse's token-only native gateway (/api/native/v0) and this phone's device credential: a 15-minute access token in
+/// memory and a single-use rotating refresh token in the Keychain. One instance for the bridge and the call ringer.
+final class ShellGateway {
+    static let shared = ShellGateway()
+    static let base = "https://pulse.estateautopilots.com/api/native/v0/"
+    static var version: String { Bundle.main.infoDictionary?["CFBundleShortVersionString"] as? String ?? "1.1.6" }
+
+    let lock = NSLock()
+    var access: String?
+    var accessUntil = Date.distantPast
+    private var generation = 0
+    private var refreshing = false
+    private var waiters: [(String?) -> Void] = []
+
+    // MARK: Keychain (this device only, readable after the first unlock)
+    private let service = "com.pulse.work.mobile.shell"
+
+    func keychainSet(_ key: String, _ value: String?) {
+        let query: [String: Any] = [kSecClass as String: kSecClassGenericPassword, kSecAttrService as String: service, kSecAttrAccount as String: key]
+        SecItemDelete(query as CFDictionary)
+        guard let value = value else { return }
+        var add = query
+        add[kSecValueData as String] = Data(value.utf8)
+        add[kSecAttrAccessible as String] = kSecAttrAccessibleAfterFirstUnlockThisDeviceOnly
+        SecItemAdd(add as CFDictionary, nil)
+    }
+
+    func keychainGet(_ key: String) -> String? {
+        let query: [String: Any] = [kSecClass as String: kSecClassGenericPassword, kSecAttrService as String: service, kSecAttrAccount as String: key,
+                                    kSecReturnData as String: true, kSecMatchLimit as String: kSecMatchLimitOne]
+        var out: AnyObject?
+        guard SecItemCopyMatching(query as CFDictionary, &out) == errSecSuccess, let data = out as? Data else { return nil }
+        return String(data: data, encoding: .utf8)
+    }
+
+    var enrolled: Bool { keychainGet("refresh") != nil && keychainGet("device") != nil }
+
+    func request(_ path: String, _ body: [String: Any]?, bearer: String? = nil, done: @escaping (Int, [String: Any]) -> Void) {
+        guard let url = URL(string: ShellGateway.base + path) else { return done(0, [:]) }
+        var request = URLRequest(url: url, timeoutInterval: 20)
+        request.httpMethod = body == nil ? "GET" : "POST"
+        request.setValue("application/json", forHTTPHeaderField: "Accept")
+        request.setValue("PulseShell/\(ShellGateway.version) (ios)", forHTTPHeaderField: "User-Agent")
+        if let bearer = bearer { request.setValue("Bearer \(bearer)", forHTTPHeaderField: "Authorization") }
+        if let body = body {
+            request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+            request.httpBody = try? JSONSerialization.data(withJSONObject: body)
+        }
+        URLSession.shared.dataTask(with: request) { data, response, _ in
+            let status = (response as? HTTPURLResponse)?.statusCode ?? 0
+            let json = (data.flatMap { try? JSONSerialization.jsonObject(with: $0) } as? [String: Any]) ?? [:]
+            done(status, json)
+        }.resume()
+    }
+
+    func accessToken(_ done: @escaping (String?) -> Void) {
+        lock.lock()
+        if let access = access, Date() < accessUntil.addingTimeInterval(-60) { lock.unlock(); return done(access) }
+        guard let refresh = keychainGet("refresh") else { lock.unlock(); return done(nil) }
+        waiters.append(done)
+        if refreshing { lock.unlock(); return }
+        refreshing = true
+        let started = generation
+        lock.unlock()
+        // Refresh credentials are single-use. Concurrent callers (Settings, location, a ringing call) share one rotation.
+        request("native/refresh", ["refreshToken": refresh]) { status, json in
+            self.lock.lock()
+            // A sign-out or replacement enrollment must never be undone by an older refresh response.
+            guard started == self.generation else { self.lock.unlock(); return }
+            var result: String?
+            if status == 200, let next = json["refreshToken"] as? String, let token = json["accessToken"] as? String {
+                self.keychainSet("refresh", next)
+                self.access = token
+                self.accessUntil = Date().addingTimeInterval(TimeInterval((json["expiresIn"] as? Int) ?? 900))
+                result = token
+            } else if status == 401 {
+                for key in ["refresh", "device", "person", "voipSent"] { self.keychainSet(key, nil) }
+                self.access = nil
+                self.accessUntil = .distantPast
+                self.generation += 1
+            }
+            let pending = self.waiters
+            self.waiters = []
+            self.refreshing = false
+            self.lock.unlock()
+            pending.forEach { $0(result) }
+        }
+    }
+
+    func forget() {
+        lock.lock()
+        // CALLS-NATIVE: the VoIP token was sent for this device; the next enrollment sends it again.
+        for key in ["refresh", "device", "person", "voipSent"] { keychainSet(key, nil) }
+        access = nil
+        accessUntil = .distantPast
+        generation += 1
+        refreshing = false
+        let pending = waiters
+        waiters = []
+        lock.unlock()
+        pending.forEach { $0(nil) }
+    }
+}
+
+/// CALLS-NATIVE: a Pulse call rings this iPhone like a phone call, with Pulse closed or the phone locked. Pulse sends
+/// an Apple VoIP push (PushKit, services/api/src/native-push.ts) and CallKit shows the call: Answer opens it in Pulse,
+/// Decline tells Pulse. While it rings the phone asks Pulse every 3 s whether it still rings for this person (answered
+/// on another device, the caller hung up, missed), so no "stop" push is needed. Needs the Apple developer account:
+/// the Push Notifications capability (aps-environment) and Pulse's APNs key on the server (PULSE_APNS_*).
+final class PulseCalls: NSObject, PKPushRegistryDelegate, CXProviderDelegate {
+    static let shared = PulseCalls()
+
+    private struct Ring { let callId: String; let test: Bool; let href: String; let until: Date; var answered: Bool }
+    private var registry: PKPushRegistry?
+    private var provider: CXProvider?
+    private var rings: [UUID: Ring] = [:]
+    private var token: String?
+    private weak var bridge: CAPBridgeProtocol?
+    private var pendingOpen: URL?
+    private var gw: ShellGateway { ShellGateway.shared }
+
+    /// At launch (AppDelegate) and when the bridge loads: a VoIP push can launch Pulse in the background, and iOS
+    /// requires the call to be reported to CallKit before the push handler returns.
+    func start() {
+        let begin = {
+            guard self.registry == nil else { return }
+            let config = CXProviderConfiguration()
+            config.supportsVideo = true
+            config.maximumCallsPerCallGroup = 1
+            config.maximumCallGroups = 1
+            config.supportedHandleTypes = [.generic]
+            config.includesCallsInRecents = false
+            let provider = CXProvider(configuration: config)
+            provider.setDelegate(self, queue: nil)
+            self.provider = provider
+            let registry = PKPushRegistry(queue: .main)
+            registry.delegate = self
+            registry.desiredPushTypes = [.voIP]
+            self.registry = registry
+        }
+        if Thread.isMainThread { begin() } else { DispatchQueue.main.sync(execute: begin) }
+    }
+
+    func attach(_ bridge: CAPBridgeProtocol?) {
+        DispatchQueue.main.async {
+            self.bridge = bridge
+            if let url = self.pendingOpen { self.pendingOpen = nil; self.open(url) }
+        }
+    }
+
+    /// "ready": Pulse has this device's VoIP token; "waiting": not yet (not registered, or no token from Apple yet).
+    func pushState() -> String {
+        #if targetEnvironment(simulator)
+        return "no-push"
+        #else
+        guard let device = gw.keychainGet("device"), let token = token ?? gw.keychainGet("voipToken") else { return "waiting" }
+        return gw.enrolled && gw.keychainGet("voipSent") == "\(device):\(token)" ? "ready" : "waiting"
+        #endif
+    }
+
+    /// Send the VoIP token to Pulse for this device (at start, after enrolling, when Apple gives a new one).
+    func registerToken() {
+        guard let token = token ?? gw.keychainGet("voipToken"), gw.enrolled, let device = gw.keychainGet("device") else { return }
+        if gw.keychainGet("voipSent") == "\(device):\(token)" { return }
+        gw.accessToken { bearer in
+            guard let bearer = bearer else { return }
+            self.gw.request("devices/\(device)/push", ["voipToken": token], bearer: bearer) { status, _ in
+                if status == 200 { self.gw.keychainSet("voipSent", "\(device):\(token)") }
+            }
+        }
+    }
+
+    // MARK: PushKit
+    func pushRegistry(_ registry: PKPushRegistry, didUpdate pushCredentials: PKPushCredentials, for type: PKPushType) {
+        guard type == .voIP else { return }
+        let hex = pushCredentials.token.map { String(format: "%02x", $0) }.joined()
+        token = hex
+        gw.keychainSet("voipToken", hex)
+        registerToken()
+    }
+
+    func pushRegistry(_ registry: PKPushRegistry, didInvalidatePushTokenFor type: PKPushType) {
+        guard type == .voIP else { return }
+        token = nil
+        gw.keychainSet("voipToken", nil)
+        gw.keychainSet("voipSent", nil)
+    }
+
+    func pushRegistry(_ registry: PKPushRegistry, didReceiveIncomingPushWith payload: PKPushPayload, for type: PKPushType, completion: @escaping () -> Void) {
+        let p = payload.dictionaryPayload
+        let text = { (key: String) -> String? in p[key] as? String }
+        let test = text("pulseType") == "call.test"
+        let callId = text("callId") ?? text("notificationId") ?? UUID().uuidString.lowercased()
+        let caller = text("caller") ?? text("title") ?? "Pulse call"
+        let href = test ? "/settings?tab=devices&ringtest=\(callId)" : (text("href") ?? "/chats")
+        let expires = PulseCalls.date(text("expiresAt")) ?? Date().addingTimeInterval(45)
+        let until = min(expires, Date().addingTimeInterval(test ? 30 : 45))
+        let uuid = UUID()
+        let update = CXCallUpdate()
+        update.remoteHandle = CXHandle(type: .generic, value: caller)
+        update.localizedCallerName = caller
+        update.hasVideo = text("video") == "1"
+        update.supportsHolding = false
+        update.supportsGrouping = false
+        update.supportsUngrouping = false
+        update.supportsDTMF = false
+        if provider == nil { start() }
+        // The same call pushed again (rung again): iOS still needs a report, so it is reported and ended at once.
+        let repeated = rings.values.contains { $0.callId == callId }
+        if !repeated { rings[uuid] = Ring(callId: callId, test: test, href: href, until: until, answered: false) }
+        // iOS ends Pulse (and stops its VoIP pushes) if a VoIP push is not reported to CallKit: always report, then end
+        // a ring that is already over.
+        provider?.reportNewIncomingCall(with: uuid, update: update) { error in
+            DispatchQueue.main.async {
+                if repeated { self.provider?.reportCall(with: uuid, endedAt: Date(), reason: .remoteEnded) }
+                else if error != nil { self.rings[uuid] = nil }
+                else if until <= Date() { self.end(uuid, .unanswered) }
+                else { self.watch(uuid) }
+                completion()
+            }
+        }
+    }
+
+    // MARK: Ringing
+    /// Ask Pulse every 3 s whether this call still rings for me; end at its time limit (Pulse leaves the missed call).
+    private func watch(_ uuid: UUID) {
+        DispatchQueue.main.asyncAfter(deadline: .now() + 3) {
+            guard let ring = self.rings[uuid], !ring.answered else { return }
+            if Date() >= ring.until { return self.end(uuid, .unanswered) }
+            if ring.test { return self.watch(uuid) }
+            self.gw.accessToken { bearer in
+                guard let bearer = bearer else { return DispatchQueue.main.async { self.watch(uuid) } }
+                self.gw.request("calls/\(ring.callId)/ring", nil, bearer: bearer) { status, json in
+                    DispatchQueue.main.async {
+                        guard let current = self.rings[uuid], !current.answered else { return }
+                        if status == 200, json["ringing"] as? Bool == false { self.end(uuid, .remoteEnded) } else { self.watch(uuid) }
+                    }
+                }
+            }
+        }
+    }
+
+    private func end(_ uuid: UUID, _ reason: CXCallEndedReason) {
+        DispatchQueue.main.async {
+            guard self.rings[uuid] != nil else { return }
+            self.rings[uuid] = nil
+            self.provider?.reportCall(with: uuid, endedAt: Date(), reason: reason)
+        }
+    }
+
+    private func open(_ url: URL) {
+        guard let web = bridge?.webView else { pendingOpen = url; return }
+        web.load(URLRequest(url: url))
+    }
+
+    // MARK: CXProviderDelegate
+    func providerDidReset(_ provider: CXProvider) {
+        DispatchQueue.main.async { self.rings.removeAll() }
+    }
+
+    func provider(_ provider: CXProvider, perform action: CXAnswerCallAction) {
+        DispatchQueue.main.async {
+            guard var ring = self.rings[action.callUUID] else { return action.fail() }
+            ring.answered = true
+            self.rings[action.callUUID] = ring
+            action.fulfill()
+            // The page answers the call itself (answer=1), as from a notification tap.
+            let path = ring.test ? ring.href : ring.href + (ring.href.contains("?") ? "&" : "?") + "answer=1"
+            if let url = URL(string: "https://pulse.estateautopilots.com" + path) { self.open(url) }
+            // A test ring has nobody on the other end: it ends once answered.
+            if ring.test { self.end(action.callUUID, .remoteEnded) }
+        }
+    }
+
+    func provider(_ provider: CXProvider, perform action: CXEndCallAction) {
+        DispatchQueue.main.async {
+            let ring = self.rings[action.callUUID]
+            self.rings[action.callUUID] = nil
+            action.fulfill()
+            // Declined before answering: tell Pulse. After answering, the page hangs up itself.
+            guard let ring = ring, !ring.answered, !ring.test else { return }
+            self.gw.accessToken { bearer in
+                guard let bearer = bearer else { return }
+                self.gw.request("calls/\(ring.callId)/decline", [:], bearer: bearer) { _, _ in }
+            }
+        }
+    }
+
+    func provider(_ provider: CXProvider, didActivate audioSession: AVAudioSession) {
+        // The call's voice runs in the web view (WebRTC): a voice-chat session, as setSpeaker uses.
+        try? audioSession.setCategory(.playAndRecord, mode: .voiceChat, options: [.allowBluetooth])
+        try? audioSession.setActive(true)
+    }
+
+    func provider(_ provider: CXProvider, didDeactivate audioSession: AVAudioSession) {}
+
+    static func date(_ iso: String?) -> Date? {
+        guard let iso = iso else { return nil }
+        let f = ISO8601DateFormatter()
+        f.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
+        if let d = f.date(from: iso) { return d }
+        f.formatOptions = [.withInternetDateTime]
+        return f.date(from: iso)
     }
 }

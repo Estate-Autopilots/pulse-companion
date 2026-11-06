@@ -153,3 +153,20 @@ pub fn hosted_acceptance(app: &AppHandle) {
         if let Err(e) = result { let _ = proof_receipt("error.json", &json!({"error":e})); }
     });
 }
+
+#[cfg(test)]
+mod tests {
+    use super::endpoint;
+    // QA-E2E: the desktop asks for its own manifest (latest-desktop.json) on its channel; phones read latest.json.
+    #[test]
+    fn desktop_reads_its_own_manifest_on_its_channel() {
+        for channel in ["test", "stable"] {
+            let url = endpoint(channel).expect("known channel");
+            assert_eq!(url.scheme(), "https");
+            assert_eq!(url.host_str(), Some("github.com"));
+            assert_eq!(url.path(), format!("/Estate-Autopilots/pulse-companion/releases/download/companion-{channel}/latest-desktop.json"));
+        }
+        assert!(endpoint("beta").is_err());
+        assert!(endpoint("../test").is_err());
+    }
+}

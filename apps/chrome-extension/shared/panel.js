@@ -147,7 +147,9 @@ export function mountPanel(root, handlers = {}) {
 
 /**
  * The sign-in view shared by the desktop panel and the Chrome popup.
- * model: { phase: 'start' | 'code' | 'password' | 'gate' | 'error', code, message, busy, still }
+ * model: { phase: 'start' | 'code' | 'awaiting' | 'password' | 'gate' | 'error', code, message, busy, still, place }
+ * place names whose Pulse this is ("Northwind Studio’s Pulse"), asked before the code is requested; 'awaiting' is a
+ * code the person approved that waits for the company's admin.
  * handlers: onPair(), onCancel(), onPassword({ username, password, code }), onDemo(), onOpenUrl()
  */
 export function renderConnect(root, model, handlers = {}) {
@@ -155,23 +157,30 @@ export function renderConnect(root, model, handlers = {}) {
   card.setAttribute('aria-label', 'Connect Pulse');
   const head = el('header', 'pc-head');
   const pip = el('div', 'pc-pip');
-  pip.innerHTML = pipSvg({ mood: model.phase === 'code' ? 'waking' : 'idle', size: 68, still: !!model.still });
+  const waiting = model.phase === 'code' || model.phase === 'awaiting';
+  pip.innerHTML = pipSvg({ mood: waiting ? 'waking' : 'idle', size: 68, still: !!model.still });
   const hello = el('div', 'pc-hello');
-  hello.append(el('p', 'pc-greet', 'Hi, I’m Pip'), el('h2', 'pc-title', model.phase === 'code' ? 'Approve in your browser' : 'Connect to Pulse'));
+  const title = model.phase === 'code' ? 'Approve in your browser' : model.phase === 'awaiting' ? 'Waiting for your admin' : model.place ? `Join ${model.place}?` : 'Connect to Pulse';
+  hello.append(el('p', 'pc-greet', 'Hi, I’m Pip'), el('h2', 'pc-title', title));
   head.append(pip, hello);
   card.append(head);
 
-  if (model.phase === 'code') {
-    card.append(el('p', 'pc-sub', 'Your browser opened Pulse. Check that it shows this code, then press Approve.'));
+  if (waiting) {
+    card.append(el('p', 'pc-sub', model.phase === 'code'
+      ? `Your browser opened ${model.place ?? 'Pulse'}. Check that it shows this code, then press Approve.`
+      : `Your admin approves new computers for ${model.place ?? 'Pulse'}. Pulse keeps waiting for up to a day, even after a restart.`));
     const code = el('p', 'pc-code', model.code ?? '');
     code.setAttribute('aria-label', `Code ${String(model.code ?? '').split('').join(' ')}`);
     card.append(code);
     const row = el('div', 'pc-actions');
-    const again = button('Open again', 'pc-btn', 'open');
-    again.addEventListener('click', () => handlers.onOpenUrl?.());
+    if (model.phase === 'code') {
+      const again = button('Open again', 'pc-btn', 'open');
+      again.addEventListener('click', () => handlers.onOpenUrl?.());
+      row.append(again);
+    }
     const cancel = button('Cancel', 'pc-btn');
     cancel.addEventListener('click', () => handlers.onCancel?.());
-    row.append(again, cancel);
+    row.append(cancel);
     card.append(row);
   } else if (model.phase === 'password') {
     const form = el('form', 'pc-form');

@@ -178,10 +178,12 @@ final class AttendanceSurfaces {
         // Status: what Pulse last confirmed (R21), with the check-in time; a forgotten check-out says so plainly.
         // The small widget says the same in fewer words (its updated line is hidden, so the as-of time sits with the hours).
         String since = s == null ? "" : dayName(s.optString("entryDate"), s.optString("today")) + " " + clock(in, offset);
+        // POLISH-2 (QA-E2E P2-6): a break says when the break began, not the check-in ("On a break since 09:58").
+        long from = "break".equals(state) && s != null && instant(s.optString("breakStarted")) > 0 ? instant(s.optString("breakStarted")) : in;
         String status = s == null ? (small ? "Open Pulse" : "Open Pulse to sign in")
             : forgotten ? (small ? "Since " + since : "Still checked in since " + since)
-            : small ? SurfacePolicy.title(state) + (open && in > 0 ? " · " + clock(in, offset) : "")
-            : "Last confirmed: " + SurfacePolicy.title(state) + (open && in > 0 ? " since " + clock(in, offset) : "");
+            : small ? SurfacePolicy.title(state) + (open && from > 0 ? " · " + clock(from, offset) : "")
+            : "Last confirmed: " + SurfacePolicy.title(state) + (open && from > 0 ? " since " + clock(from, offset) : "");
         view.setTextViewText(R.id.attendance_status, status);
         // Time worked today, as of that confirmation (no timer runs on the home screen).
         String worked = "";

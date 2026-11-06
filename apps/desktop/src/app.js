@@ -3,11 +3,13 @@
 import { renderConnect } from './companion/panel.js';
 import { pipSvg } from './companion/pip.js';
 import { applyTheme, store } from './prefs.js';
+import { renderAddress, saveAddress } from './address.js';
+import { ADMIN_WAIT, follow, learnCompany, place } from './pairing.js';
 
 const invoke = (cmd, args) => window.__TAURI__.core.invoke(cmd, args);
 const root = document.getElementById('app');
 const failure = (e) => { try { return JSON.parse(String(e?.message ?? e)); } catch { return { message: String(e?.message ?? e ?? 'Something went wrong') }; } };
-let connect = { phase: 'start' }, pollTimer = null, retryTimer = null, current = '';
+let connect = { phase: 'start' }, address = {}, session = {}, stopPoll = () => {}, retryTimer = null, current = '';
 applyTheme();
 
 function screen({ mood, title, text, actions = [], live = 'polite' }) {
@@ -40,34 +42,37 @@ function show(state, message) {
 }
 
 function signedOut(message) {
-  renderConnect(root, { ...connect, message: connect.message ?? message, still: false }, {
+  // A new computer first learns which Pulse it belongs to; sign-in appears once the address passes the probe.
+  if (!session.base) { renderAddress(root, address, { onSave: saveAndConnect }); root.firstElementChild?.classList.add('app-card', 'app-connect'); return; }
+  // While the quick panel waits for the admin (after a restart), this window shows the wait; the panel polls.
+  if (connect.phase === 'start' && session.awaitingAdmin) connect = { phase: 'awaiting', code: session.awaitingAdmin.code, message: ADMIN_WAIT };
+  const asked = session;
+  void learnCompany(invoke, asked).then((company) => { if (company && session === asked) { session = { ...asked, company }; if (current === 'signed-out') signedOut(); } });
+  renderConnect(root, { ...connect, place: place(session), message: connect.message ?? message, still: false }, {
     onPair: pair,
-    onCancel() { clearInterval(pollTimer); void invoke('companion_pair_cancel'); connect = { phase: 'start' }; signedOut(); },
+    onCancel() { stopPoll(); session = { ...session, awaitingAdmin: null }; void invoke('companion_pair_cancel'); connect = { phase: 'start' }; signedOut(); },
     onOpenUrl() { if (connect.code) void invoke('open_in_browser', { path: `/connect?code=${connect.code}` }); },
   });
   const card = root.firstElementChild;
   card?.classList.add('app-card', 'app-connect');
-  const title = card?.querySelector('.pc-title');
-  if (title && connect.phase === 'start') title.textContent = 'Welcome to Pulse';
   const sub = card?.querySelector('.pc-sub');
   if (sub && connect.phase === 'start') sub.textContent = 'Your whole Pulse, in its own window: today, inbox, chats, leave and more. Sign in once with your Pulse account — you approve it in your browser, no password typed here.';
+}
+
+async function saveAndConnect(value) {
+  address = { value, busy: true }; signedOut();
+  try { session = await saveAddress(invoke, value); address = {}; connect = { phase: 'start' }; }
+  catch (e) { address = { value, message: e.message }; }
+  if (current === 'signed-out') signedOut();
 }
 
 async function pair() {
   connect = { phase: 'start', busy: true, message: 'Opening Pulse in your browser…' }; signedOut();
   try {
-    const started = await invoke('companion_pair_start', { expectedPerson: store.get('expectedPerson', null), base: 'https://pulse.estateautopilots.com/api/native/v0' });
+    const started = await invoke('companion_pair_start', { expectedPerson: store.get('expectedPerson', null), base: session.base });
     connect = { phase: 'code', code: started.code, message: 'Waiting for your approval…' }; signedOut();
-    clearInterval(pollTimer);
-    const deadline = Date.now() + (started.expiresIn ?? 600) * 1000;
-    pollTimer = setInterval(async () => {
-      if (Date.now() > deadline) { clearInterval(pollTimer); connect = { phase: 'error', message: 'The code expired. Start again when you’re ready.' }; signedOut(); return; }
-      try {
-        const r = await invoke('companion_pair_poll');
-        if (r.status === 'approved') { clearInterval(pollTimer); connect = { phase: 'start' }; go(); }
-        else if (r.status !== 'pending') { clearInterval(pollTimer); connect = { phase: 'error', message: r.status === 'denied' ? 'Not approved. Nothing was signed in.' : 'The code expired. Start again when you’re ready.' }; signedOut(); }
-      } catch (e) { const f = failure(e); if (!f.offline) { clearInterval(pollTimer); connect = { phase: f.gate ? 'gate' : 'error', message: f.message }; signedOut(); } }
-    }, Math.max(2, started.interval ?? 3) * 1000);
+    stopPoll();
+    stopPoll = follow(invoke, started, (next) => { connect = next; signedOut(); }, () => { connect = { phase: 'start' }; go(); });
   } catch (e) { const f = failure(e); connect = { phase: f.gate ? 'gate' : 'error', message: f.message }; signedOut(); }
 }
 
@@ -80,7 +85,9 @@ async function boot() {
   try { window.__TAURI__.event?.listen('pulse:app-state', ({ payload }) => { if (payload.state !== current || payload.message) show(payload.state, payload.message); })?.catch?.(() => {}); } catch { /* events unavailable */ }
   try { window.__TAURI__.event?.listen('pulse:prefs', () => applyTheme())?.catch?.(() => {}); } catch { /* events unavailable */ }
   try { window.__TAURI__.event?.listen('pulse:signed-in', () => { if (current === 'signed-out') go(); })?.catch?.(() => {}); } catch { /* events unavailable */ }
+  try { window.__TAURI__.event?.listen('pulse:address', async () => { session = await invoke('companion_session').catch(() => ({})); if (current === 'signed-out') signedOut(); })?.catch?.(() => {}); } catch { /* events unavailable */ }
   addEventListener('online', () => { if (current === 'offline') go(); });
+  session = await invoke('companion_session').catch(() => ({}));
   if (hash) { show(hash); return; }
   const s = await invoke('app_window_state').catch(() => ({ signedIn: false }));
   show(s.restoring ? 'restoring' : s.signedIn ? 'loading' : 'signed-out');

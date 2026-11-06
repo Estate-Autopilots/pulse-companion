@@ -115,3 +115,14 @@ test('the check-in body names the place and signal, never coordinates', () => {
   assert.equal(JSON.stringify(body).includes('28.'), false);
   assert.equal(presenceBody(d, { trigger: 'wifi', place: wifiMatch({ ssid: 'Demo-WiFi', bssid: 'a4:2b:b0:11:22:33' }, presence) }, true).place.signal, 'wifi');
 });
+
+test('ATT: with automatic check-out on, leaving a geofence asks nothing on the phone (the server judges every signal)', () => {
+  const at = IST('18:45');
+  const inDay = { ...applyLocal(payload('out', IST('09:50')), 'check-in', IST('09:55')), presence: { ...presence, autoCheckOut: true } };
+  const exit = { trigger: 'exit', place: { kind: 'office', placeId: 'o1', id: 'office:o1', name: 'Demo office' } };
+  assert.equal(decidePresence({ signal: exit, payload: inDay, prefs, at }).kind, 'none');
+  assert.equal(decidePresence({ signal: exit, payload: inDay, prefs, at }).reason, 'server-decides');
+  // A company without automatic check-out keeps the phone's own suggestion.
+  const manual = { ...inDay, presence: { ...presence, autoCheckOut: false } };
+  assert.equal(decidePresence({ signal: exit, payload: manual, prefs, at }).kind, 'suggest-leave');
+});

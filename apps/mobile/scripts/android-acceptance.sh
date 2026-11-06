@@ -14,6 +14,7 @@ OUT=${3:-screens}
 PKG=com.pulse.work.mobile
 # The sign-in form itself (its Username field), not merely a page that mentions signing in.
 SIGNIN=${PULSE_SIGNIN_TEXT:-Username}
+ORIGIN=${PULSE_ORIGIN:-https://app.vitalsos.ai}
 ACT=$PKG/.MainActivity
 # A lost emulator must fail with diagnostics instead of hanging an entire hosted job in adb.
 ADB_BIN=$(command -v adb)
@@ -196,7 +197,7 @@ pass edge_to_edge "gesture and 3-button navigation, 360 and 390, light and dark 
 
 ready
 # 3. Back: through Pulse's history, then minimise at the start (never a blank page, never an exit).
-adb shell am start -W -n "$ACT" -a android.intent.action.VIEW -d "https://pulse.estateautopilots.com/apps/android" >/dev/null
+adb shell am start -W -n "$ACT" -a android.intent.action.VIEW -d "$ORIGIN/apps/android" >/dev/null
 wait_text 'Pulse for Android' 60
 shot 3-back-1-second-page
 adb shell input keyevent KEYCODE_BACK
@@ -257,15 +258,20 @@ adb install -r "$TEST_APK"
 R21_WIDGET_USER=$(adb shell am get-current-user | tr -d '\r')
 [[ "$R21_WIDGET_USER" =~ ^[0-9]+$ ]]
 adb shell appwidget grantbind --package "$PKG" --user "$R21_WIDGET_USER"
+native_failed=0
 for permission in granted denied; do
   if [ "$permission" = granted ]; then adb shell pm grant $PKG android.permission.POST_NOTIFICATIONS; else adb shell pm revoke $PKG android.permission.POST_NOTIFICATIONS; fi
-  adb shell am instrument -w "$PKG.test/androidx.test.runner.AndroidJUnitRunner" > "$OUT/r21-native-$permission.txt"
+  if ! adb shell am instrument -w -e class com.pulse.work.mobile.AttendanceSurfacesTest "$PKG.test/androidx.test.runner.AndroidJUnitRunner" > "$OUT/r21-native-$permission.txt"; then native_failed=1; fi
   cat "$OUT/r21-native-$permission.txt"
-  grep -q 'OK (7 tests)' "$OUT/r21-native-$permission.txt"
-  if grep -qE 'FAILURES|INSTRUMENTATION_FAILED|Process crashed' "$OUT/r21-native-$permission.txt"; then exit 1; fi
-  adb pull "/sdcard/Android/data/$PKG/files/r21-widget.png" "$OUT/r21-widget-$permission.png"
+  adb shell dumpsys notification > "$OUT/r21-notifications-$permission.txt"
+  adb shell dumpsys package "$PKG" > "$OUT/r21-package-$permission.txt"
+  adb pull "/sdcard/Android/data/$PKG/files/r21-notification-state.json" "$OUT/r21-notification-state-$permission.json" || native_failed=1
+  if ! grep -q 'OK (7 tests)' "$OUT/r21-native-$permission.txt" || grep -qE 'FAILURES|INSTRUMENTATION_FAILED|Process crashed' "$OUT/r21-native-$permission.txt"; then
+    native_failed=1
+    echo "r21_native_surfaces_$permission=fail" | tee -a "$OUT/acceptance.txt"
+  else pass "r21_native_surfaces_$permission" "7 synthetic native tests; no staff sign-in or attendance transport"; fi
+  adb pull "/sdcard/Android/data/$PKG/files/r21-widget.png" "$OUT/r21-widget-$permission.png" || native_failed=1
   for state in in forgotten; do adb pull "/sdcard/Android/data/$PKG/files/polish1-widget-small-$state.png" "$OUT/polish1-widget-small-$state-$permission.png" || true; done
-  pass "r21_native_surfaces_$permission" "7 synthetic native tests; no staff sign-in or attendance transport"
 done
 adb shell appwidget revokebind --package "$PKG" --user "$R21_WIDGET_USER"
 adb shell am force-stop $PKG
@@ -274,4 +280,5 @@ wait_text "$SIGNIN" 120
 shot 6-r21-cold-workspace-denied
 pass r21_cold_workspace_denied "cold My desk shortcut retains normal sign-in with notifications denied"
 
+[ "$native_failed" = 0 ] || { echo "Native acceptance failed; both permission states and diagnostics retained" >&2; exit 1; }
 echo "All Android acceptance checks passed" | tee -a "$OUT/acceptance.txt"

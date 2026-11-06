@@ -206,7 +206,7 @@ jobs:
           sleep 15
           kill -0 "$app_pid"
           screencapture -x screens/macos-desktop.png
-          PULSE_ACCEPTANCE_DIR="$PWD/screens" "$app/Contents/MacOS/pulse-desktop" --admission-acceptance
+          PULSE_ACCEPTANCE_DIR="$PWD/screens" PULSE_ACCEPTANCE_ADDRESS=https://pulse.estateautopilots.com "$app/Contents/MacOS/pulse-desktop" --admission-acceptance
           node -e 'const r=JSON.parse(require("fs").readFileSync("screens/admission.json")).result.Ok;if(!r?.readDenied||!r?.refreshDenied||!r?.signedOutOnly)throw Error("Installed native HTTPS admission failed")'
           # Real OS keyboard events against the installed DMG app; no browser or mock IPC.
           osascript -e 'tell application "System Events" to key code 53'
