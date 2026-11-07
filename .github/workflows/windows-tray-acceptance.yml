@@ -73,8 +73,8 @@ jobs:
           if ($hidden) { Click-Element $hidden }
           $buttons=$root.FindAll([System.Windows.Automation.TreeScope]::Descendants,$condition)
           $buttons | ForEach-Object {$_.Current.Name} | Set-Content screens/tray-button-names.txt
-          $icon=$buttons | Where-Object {$_.Current.Name -match '^Pulse(?:\s|$)'  -and $_.Current.ProcessId -ne $app.Id} | Select-Object -First 1
-          if (-not $icon) { Capture 'windows-tray-missing';throw 'Pulse tray button missing from the visible tray/overflow' }
+          $icon=$buttons | Where-Object {$_.Current.Name -match '^(?:Vitals OS|Pulse)(?:\s|$)'  -and $_.Current.ProcessId -ne $app.Id} | Select-Object -First 1
+          if (-not $icon) { Capture 'windows-tray-missing';throw 'Vitals OS tray button missing from the visible tray/overflow' }
           Capture 'windows-tray-icon'
           Click-Element $icon
           if (-not [PulseTray]::IsWindowVisible($panel)) { throw 'Actual tray click did not open the installed panel' }
