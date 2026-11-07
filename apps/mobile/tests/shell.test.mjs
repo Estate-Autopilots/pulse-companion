@@ -446,8 +446,9 @@ test('calls ring with Pulse closed: one push service, a full-screen ring over th
   assert.match(service, /PushNotificationsPlugin\.sendRemoteMessage\(message\)/, 'other pushes still reach the plugin');
   assert.match(service, /PushNotificationsPlugin\.onNewToken\(token\)/);
   // The device credential may only ask whether a call rings and decline it (web gateway and API scope).
-  const gateway = readFileSync(resolve(repo, 'apps/web/app/api/native/gateway.mjs'), 'utf8');
-  assert.match(gateway, /calls\\\/\[0-9a-f-\]\{36\}\\\/\(ring\|decline\)/);
+  // The web gateway is server code and is not in the public client export; check it only where it exists (PHONE-QA).
+  const gatewayFile = resolve(repo, 'apps/web/app/api/native/gateway.mjs');
+  if (existsSync(gatewayFile)) assert.match(readFileSync(gatewayFile, 'utf8'), /calls\\\/\[0-9a-f-\]\{36\}\\\/\(ring\|decline\)/);
   // iPhone: PushKit VoIP pushes reported to CallKit, the VoIP token sent to Pulse, the voip background mode.
   assert.match(swift, /PKPushRegistry/);
   assert.match(swift, /reportNewIncomingCall/);
