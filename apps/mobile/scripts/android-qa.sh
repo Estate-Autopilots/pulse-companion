@@ -210,6 +210,10 @@ GALLERY
     # The AOSP camera may show its own first-use information page.
     sleep 3
     tap_text 'No thanks|Not now' || true
+    # PHONE-QA: the manifest declares CAMERA (calls), so Android asks before the system camera opens for a site photo.
+    tap_text 'WHILE USING THE APP|While using the app|ONLY THIS TIME|Only this time' || true
+    sleep 2
+    tap_text 'No thanks|Not now' || true
     if wait_text 'Next|Shutter|Take photo|Capture|Done' 20; then
       tap_text '^Next$' || true
       sleep 2
