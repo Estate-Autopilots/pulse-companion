@@ -52,12 +52,19 @@ shots.push([`${web}/vitals-os-192.png`, 192, tile(192)]);
 shots.push([`${web}/vitals-os-512.png`, 512, tile(512)]);
 shots.push([`${web}/vitals-os-maskable-512.png`, 512, line(512, 0.6, VITALS.tile), true]);
 shots.push([`${web}/vitals-os-apple-180.png`, 180, tile(180, 0), true]);
+// Add to Home Screen on iPhone: the touch icon, and a launch image per iPhone screen (layout.tsx names the same sizes).
+shots.push([resolve(repo, 'apps/web/app/apple-icon.png'), 180, tile(180, 0), true]);
+for (const [w, h, r] of [[430, 932, 3], [393, 852, 3], [390, 844, 3], [428, 926, 3], [375, 812, 3], [414, 896, 2], [375, 667, 2], [440, 956, 3], [402, 874, 3]]) {
+  const W = w * r, H = h * r;
+  shots.push([resolve(repo, `apps/web/public/splash/vitals-os-${W}x${H}.png`), [W, H], `<div style="width:${W}px;height:${H}px;display:grid;place-items:center;background:${VITALS.light}">${tile(Math.round(W * 0.28))}</div>`, true]);
+}
 
 const browser = await chromium.launch();
 try {
   const page = await browser.newPage({ deviceScaleFactor: 1 });
   for (const [file, size, html, opaque] of shots) {
-    await page.setViewportSize({ width: size, height: size });
+    const [width, height] = Array.isArray(size) ? size : [size, size];
+    await page.setViewportSize({ width, height });
     await page.setContent(`<!doctype html><style>html,body{margin:0;background:transparent} #x svg{display:block}</style><div id="x" style="display:inline-block">${html}</div>`);
     await mkdir(dirname(file), { recursive: true });
     await page.locator('#x').screenshot({ path: file, omitBackground: !opaque });
