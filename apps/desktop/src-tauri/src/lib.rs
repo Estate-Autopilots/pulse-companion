@@ -633,7 +633,7 @@ pub fn run() {
             TrayIconBuilder::with_id("pulse")
                 .icon(icon)
                 .icon_as_template(cfg!(target_os = "macos"))
-                .tooltip("Pulse")
+                .tooltip("Vitals OS")
                 .menu(&menu)
                 .show_menu_on_left_click(false)
                 .on_tray_icon_event(|tray, event| {

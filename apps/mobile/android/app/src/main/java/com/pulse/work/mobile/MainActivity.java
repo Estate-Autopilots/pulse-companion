@@ -27,7 +27,7 @@ import com.getcapacitor.BridgeActivity;
  */
 public class MainActivity extends BridgeActivity {
 
-    static final String HOST = "pulse.estateautopilots.com";
+    static final String HOST = "app.vitalsos.ai";
     static final String ORIGIN = "https://" + HOST;
     static final String EXTRA_HREF = "pulse.href";
     static final String EXTRA_ASK = "pulse.ask";

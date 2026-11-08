@@ -3,7 +3,7 @@ import { readFileSync, writeFileSync } from 'node:fs';
 import { dirname, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
-export const DEFAULT_ORIGIN = 'https://pulse.estateautopilots.com';
+export const DEFAULT_ORIGIN = 'https://app.vitalsos.ai';
 export function validateOrigin(value = '') {
   const origin = value || DEFAULT_ORIGIN;
   const host = origin.slice('https://'.length);

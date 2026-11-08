@@ -30,7 +30,7 @@ jobs:
         run: |
           New-Item -ItemType Directory -Force screens | Out-Null
           $run = gh api "repos/$env:GITHUB_REPOSITORY/actions/runs/$env:BUILD_RUN" | ConvertFrom-Json
-          if (@('Pulse Companion builds', 'Desktop updater release') -notcontains $run.name -or $run.head_branch -ne 'main' -or $env:ARTIFACT_NAME -ne "companion-desktop-windows-$($run.head_sha)") { throw 'Wrong build artifact' }
+          if (@('Pulse Companion builds', 'Desktop updater release') -notcontains $run.name -or @('main', 'validation/mobile-shell') -notcontains $run.head_branch -or $env:ARTIFACT_NAME -ne "companion-desktop-windows-$($run.head_sha)") { throw 'Wrong build artifact' }
           $exe = Get-ChildItem archive -Filter *.exe -Recurse | Select-Object -First 1
           if (-not $exe) { throw 'Installer missing' }
           $hash = (Get-FileHash $exe.FullName -Algorithm SHA256).Hash.ToLowerInvariant()
@@ -73,8 +73,8 @@ jobs:
           if ($hidden) { Click-Element $hidden }
           $buttons=$root.FindAll([System.Windows.Automation.TreeScope]::Descendants,$condition)
           $buttons | ForEach-Object {$_.Current.Name} | Set-Content screens/tray-button-names.txt
-          $icon=$buttons | Where-Object {$_.Current.Name -match '^Pulse(?:\s|$)'  -and $_.Current.ProcessId -ne $app.Id} | Select-Object -First 1
-          if (-not $icon) { Capture 'windows-tray-missing';throw 'Pulse tray button missing from the visible tray/overflow' }
+          $icon=$buttons | Where-Object {$_.Current.Name -match '^(?:Vitals OS|Pulse)(?:\s|$)'  -and $_.Current.ProcessId -ne $app.Id} | Select-Object -First 1
+          if (-not $icon) { Capture 'windows-tray-missing';throw 'Vitals OS tray button missing from the visible tray/overflow' }
           Capture 'windows-tray-icon'
           Click-Element $icon
           if (-not [PulseTray]::IsWindowVisible($panel)) { throw 'Actual tray click did not open the installed panel' }

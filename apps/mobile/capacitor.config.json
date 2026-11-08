@@ -1,12 +1,12 @@
 {
   "appId": "com.pulse.work.mobile",
-  "appName": "Pulse",
+  "appName": "Vitals OS",
   "webDir": "www",
   "loggingBehavior": "debug",
-  "appendUserAgent": "PulseShell/1.1.5",
+  "appendUserAgent": "PulseShell/1.2.0",
   "zoomEnabled": false,
   "server": {
-    "url": "https://pulse.estateautopilots.com",
+    "url": "https://app.vitalsos.ai",
     "allowNavigation": [],
     "errorPath": "offline.html",
     "androidScheme": "https"

@@ -103,7 +103,7 @@ pub fn open(app: &AppHandle, path: Option<String>) {
     let handle = app.clone();
     let nav_handle = app.clone();
     let mut builder = WebviewWindowBuilder::new(app, MAIN, WebviewUrl::App("app.html".into()))
-        .title("Pulse")
+        .title("Vitals OS")
         .inner_size(1280.0, 820.0)
         .min_inner_size(880.0, 600.0)
         .visible(false)

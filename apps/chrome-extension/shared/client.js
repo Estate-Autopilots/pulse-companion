@@ -2,7 +2,7 @@
 // browser pairing ("Sign in with your Pulse account") and clear errors for offline and for the outer Access gate.
 import { actionRequest } from './view.js';
 
-export const DEFAULT_BASE = 'https://pulse.estateautopilots.com/api/native/v0';
+export const DEFAULT_BASE = 'https://app.vitalsos.ai/api/native/v0';
 const TOKEN = /^[A-Za-z0-9_-]{43}$/;
 
 /** Pulse is unreachable because the site's outer sign-in gate (Cloudflare Access) answered instead of Pulse. */

@@ -14,7 +14,7 @@ OUT=${3:-screens}
 PKG=com.pulse.work.mobile
 # The sign-in form itself (its Username field), not merely a page that mentions signing in.
 SIGNIN=${PULSE_SIGNIN_TEXT:-Username}
-ORIGIN=${PULSE_ORIGIN:-https://pulse.estateautopilots.com}
+ORIGIN=${PULSE_ORIGIN:-https://app.vitalsos.ai}
 ACT=$PKG/.MainActivity
 # A lost emulator must fail with diagnostics instead of hanging an entire hosted job in adb.
 ADB_BIN=$(command -v adb)

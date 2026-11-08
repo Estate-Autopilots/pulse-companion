@@ -57,16 +57,16 @@
             </intent-filter>
 
             <!-- All production Pulse links open in the app, including routes added by future web releases.
-                 Verified by https://pulse.estateautopilots.com/.well-known/assetlinks.json -->
+                 Verified by https://app.vitalsos.ai/.well-known/assetlinks.json -->
             <intent-filter android:autoVerify="true">
                 <action android:name="android.intent.action.VIEW" />
                 <category android:name="android.intent.category.DEFAULT" />
                 <category android:name="android.intent.category.BROWSABLE" />
-                <data android:scheme="https" android:host="pulse.estateautopilots.com" />
+                <data android:scheme="https" android:host="app.vitalsos.ai" />
             </intent-filter>
         </activity>
 
-        <receiver android:name=".AttendanceWidget" android:exported="false" android:label="Pulse · today">
+        <receiver android:name=".AttendanceWidget" android:exported="false" android:label="Vitals OS · today">
             <intent-filter>
                 <action android:name="android.appwidget.action.APPWIDGET_UPDATE" />
                 <action android:name="android.intent.action.BOOT_COMPLETED" />
@@ -75,7 +75,7 @@
         </receiver>
 
         <!-- POLISH-1: the small widget (2×1); the medium one above (3×2). Both draw for the size the launcher gives. -->
-        <receiver android:name=".AttendanceWidgetSmall" android:exported="false" android:label="Pulse · check-in">
+        <receiver android:name=".AttendanceWidgetSmall" android:exported="false" android:label="Vitals OS · check-in">
             <intent-filter>
                 <action android:name="android.appwidget.action.APPWIDGET_UPDATE" />
             </intent-filter>

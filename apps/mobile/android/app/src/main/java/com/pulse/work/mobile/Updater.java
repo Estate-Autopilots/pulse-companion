@@ -40,7 +40,7 @@ final class Updater {
     private Updater() {}
 
     private static String releaseSuffix() {
-        if ("https://pulse.estateautopilots.com".equals(MainActivity.ORIGIN)) return "";
+        if ("https://app.vitalsos.ai".equals(MainActivity.ORIGIN)) return "";
         try {
             return hex(MessageDigest.getInstance("SHA-256").digest(MainActivity.ORIGIN.getBytes(StandardCharsets.UTF_8))).substring(0, 8);
         } catch (NoSuchAlgorithmException e) {

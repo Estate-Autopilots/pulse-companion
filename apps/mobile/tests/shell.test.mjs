@@ -26,7 +26,7 @@ const PULSE_SIGNING_SHA256 = '7fb7e080fe49b5f285cbd436c500167575d5f1e6f862e7fbbe
 
 test('the shell loads production Pulse and nothing else inside the app', () => {
   assert.equal(config.appId, 'com.pulse.work.mobile');
-  assert.equal(config.server.url, 'https://pulse.estateautopilots.com');
+  assert.equal(config.server.url, 'https://app.vitalsos.ai');
   assert.deepEqual(config.server.allowNavigation, [], 'other sites open outside the app');
   assert.notEqual(config.server.cleartext, true);
   assert.equal(config.android.allowMixedContent, false);
@@ -38,9 +38,9 @@ test('the shell loads production Pulse and nothing else inside the app', () => {
 
 test('the offline screen only ever reopens Pulse', () => {
   const html = read('www/offline.html');
-  assert.match(html, /var ORIGIN = 'https:\/\/pulse\.estateautopilots\.com';/);
+  assert.match(html, /var ORIGIN = 'https:\/\/app\.vitalsos\.ai';/);
   assert.match(html, /from\.indexOf\(ORIGIN \+ '\/'\) === 0 \? from : ORIGIN \+ '\/'/);
-  assert.doesNotMatch(html, /<script[^>]+src=|<link[^>]+href=|https?:\/\/(?!pulse\.estateautopilots\.com|www\.w3\.org)/, 'self-contained: works with no network');
+  assert.doesNotMatch(html, /<script[^>]+src=|<link[^>]+href=|https?:\/\/(?!app\.vitalsos\.ai|www\.w3\.org)/, 'self-contained: works with no network');
   assert.match(html, />Retry</);
 });
 
@@ -49,11 +49,11 @@ test('installs over the Expo app: same package, durable key, higher versionCode'
   assert.match(gradle, new RegExp(`def pulseVersion = '${pkg.version.replaceAll('.', '\\.')}'`));
   const [a, b, c] = pkg.version.split('.').map(Number);
   assert.ok(a * 1000000 + b * 1000 + c > PUBLISHED_EXPO_VERSION_CODE);
-  assert.equal(pkg.version, '1.1.5');
+  assert.equal(pkg.version, '1.2.0');
   assert.match(gradle, /storeType "PKCS12"[\s\S]*keyAlias "pulse"/, 'the Expo build used this key store and alias');
   const pbx = read('ios/App/App.xcodeproj/project.pbxproj');
   assert.equal((pbx.match(new RegExp(`MARKETING_VERSION = ${pkg.version.replaceAll('.', '\\.')};`, 'g')) ?? []).length, 2);
-  assert.equal((pbx.match(/CURRENT_PROJECT_VERSION = 1001005;/g) ?? []).length, 2);
+  assert.equal((pbx.match(/CURRENT_PROJECT_VERSION = 1002000;/g) ?? []).length, 2);
 });
 
 test('the Android manifest asks for no tracking and keeps credentials on the phone', () => {
@@ -85,10 +85,10 @@ test('the Android manifest asks for no tracking and keeps credentials on the pho
 
 test('all production Pulse routes open in the app, including future web routes', () => {
   assert.match(manifest, /android:autoVerify="true"/);
-  assert.match(manifest, /android:host="pulse\.estateautopilots\.com"/);
+  assert.match(manifest, /android:host="app\.vitalsos\.ai"/);
   assert.doesNotMatch(manifest, /android:path(?:Prefix|Pattern)?=/, 'App Links cover every production route');
   const hosts = [...manifest.matchAll(/android:host="([^"]+)"/g)].map(m => m[1]);
-  assert.deepEqual(hosts, ['pulse.estateautopilots.com'], 'external domains stay outside the app');
+  assert.deepEqual(hosts, ['app.vitalsos.ai'], 'external domains stay outside the app');
   const links = resolve(repo, 'apps/web/app/lib/assetlinks.json');
   if (existsSync(links)) {
     const target = JSON.parse(readFileSync(links, 'utf8'))[0].target;
@@ -154,7 +154,7 @@ test('origin Android builds refuse EA releases, other origins and malformed suff
 
 test('Android availability and download share the origin guard before any download connection', () => {
   const updater = read('android/app/src/main/java/com/pulse/work/mobile/Updater.java');
-  assert.match(updater, /if \("https:\/\/pulse\.estateautopilots\.com"\.equals\(MainActivity\.ORIGIN\)\) return "";/);
+  assert.match(updater, /if \("https:\/\/app\.vitalsos\.ai"\.equals\(MainActivity\.ORIGIN\)\) return "";/);
   assert.match(updater, /hex\(MessageDigest\.getInstance\("SHA-256"\)\.digest\(MainActivity\.ORIGIN\.getBytes\(StandardCharsets\.UTF_8\)\)\)\.substring\(0, 8\)/);
   assert.match(updater, /out\.put\("available", code > Shell\.code\(\) && trustedRelease\(f\.getString\("url"\)\)\)/);
   const guard = updater.split('boolean trustedRelease(String value)')[1].split('static long codeOf')[0];
@@ -303,7 +303,7 @@ test('host releases keep trusted URLs and publish only their own download entry;
       const entryName = origin ? `android-${new URL(origin).hostname}-entry.json` : 'android-channel-entry.json';
       const entry = JSON.parse(readFileSync(join(dir, 'release', entryName)));
       assert.equal(entry.origin, origin || undefined);
-      assert.equal(entry.versionCode, 1001005);
+      assert.equal(entry.versionCode, 1002000);
       assert.equal(entry.size, Buffer.byteLength('synthetic-apk'));
       assert.equal(entry.sha256, createHash('sha256').update('synthetic-apk').digest('hex'));
       assert.equal(entry.url, `https://github.com/Estate-Autopilots/pulse-companion/releases/download/${result.tag}/${entry.name}`);
@@ -413,7 +413,7 @@ else {
 
   const refusals = [
     ['EA tag on another address', /built for https:\/\/pulse\.example\.com/, wl, release('').tag],
-    ['another address on EA', /built for https:\/\/pulse\.estateautopilots\.com/, '', release(wl).tag],
+    ['another address on EA', /built for https:\/\/app\.vitalsos\.ai/, '', release(wl).tag],
     ['a third address', /built for https:\/\/another\.example\.com/, other, release(wl).tag],
     ['entry without its address', /built for another address/, wl, release(wl).tag, release(wl, { entry: { origin: undefined } })],
     ['EA entry naming an address', /built for another address/, '', release('').tag, release('', { entry: { origin: wl } })],
@@ -446,8 +446,9 @@ test('calls ring with Pulse closed: one push service, a full-screen ring over th
   assert.match(service, /PushNotificationsPlugin\.sendRemoteMessage\(message\)/, 'other pushes still reach the plugin');
   assert.match(service, /PushNotificationsPlugin\.onNewToken\(token\)/);
   // The device credential may only ask whether a call rings and decline it (web gateway and API scope).
-  const gateway = readFileSync(resolve(repo, 'apps/web/app/api/native/gateway.mjs'), 'utf8');
-  assert.match(gateway, /calls\\\/\[0-9a-f-\]\{36\}\\\/\(ring\|decline\)/);
+  // The web gateway is server code and is not in the public client export; check it only where it exists (PHONE-QA).
+  const gatewayFile = resolve(repo, 'apps/web/app/api/native/gateway.mjs');
+  if (existsSync(gatewayFile)) assert.match(readFileSync(gatewayFile, 'utf8'), /calls\\\/\[0-9a-f-\]\{36\}\\\/\(ring\|decline\)/);
   // iPhone: PushKit VoIP pushes reported to CallKit, the VoIP token sent to Pulse, the voip background mode.
   assert.match(swift, /PKPushRegistry/);
   assert.match(swift, /reportNewIncomingCall/);
