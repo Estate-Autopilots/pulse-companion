@@ -50,6 +50,41 @@
   --theme-brand-2: #c084fc;
 }
 
+/* VITALS-DESIGN (19 Nov 2026): colour by meaning for the state of work, built only from the state colours above (no
+   new hex), the brand kit's "five tones" for Pulse:
+     done = finished (Done, Paid, Signed) · info = good to know (New, Doing) · action = needs you (Your turn, Due today,
+     To approve) · waiting = waiting on someone else (Sent, In review) · problem = something is wrong (Late, Failed).
+   --tone-x is the text ink, --tone-x-soft the chip fill (the ink on its soft), --tone-x-mark icons, rings and bars.
+   --tone-action (amber: why you must act) is not --theme-action (iris: the button you act with); the iris is never a
+   state. In light the ink keeps 85% of its colour and takes 15% of the text colour, so every ink reads at 4.5:1 or
+   more on its soft, the surface, the canvas and the subtle surface, in both themes (app/lib/design-tones.test.mjs). */
+:root,
+:root[data-theme="light"] {
+  --tone-done: color-mix(in srgb, var(--theme-success) 85%, var(--theme-text));
+  --tone-info: color-mix(in srgb, var(--theme-info) 85%, var(--theme-text));
+  --tone-action: color-mix(in srgb, var(--theme-warning) 85%, var(--theme-text));
+  --tone-problem: color-mix(in srgb, var(--theme-danger) 85%, var(--theme-text));
+}
+:root[data-theme="dark"] {
+  --tone-done: var(--theme-success);
+  --tone-info: var(--theme-info);
+  --tone-action: var(--theme-warning);
+  --tone-problem: var(--theme-danger);
+}
+:root {
+  --tone-waiting: var(--theme-text-muted);
+  --tone-done-soft: color-mix(in srgb, var(--theme-success) var(--ds-tint, 13%), var(--theme-surface));
+  --tone-info-soft: color-mix(in srgb, var(--theme-info) var(--ds-tint, 13%), var(--theme-surface));
+  --tone-action-soft: color-mix(in srgb, var(--theme-warning) var(--ds-tint, 13%), var(--theme-surface));
+  --tone-waiting-soft: var(--theme-surface-subtle);
+  --tone-problem-soft: color-mix(in srgb, var(--theme-danger) var(--ds-tint, 13%), var(--theme-surface));
+  --tone-done-mark: var(--theme-success);
+  --tone-info-mark: var(--theme-info);
+  --tone-action-mark: var(--theme-warning);
+  --tone-waiting-mark: var(--theme-text-muted);
+  --tone-problem-mark: var(--theme-danger);
+}
+
 * { box-sizing: border-box; }
 html { min-height: 100%; background: var(--theme-canvas); }
 body {
