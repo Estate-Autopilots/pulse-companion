@@ -14,6 +14,10 @@
   --theme-action-hover: #4a35c0;
   --theme-action-text: #ffffff;
   --theme-focus: #7a68e6;
+  /* VITALS-DESIGN-5: the docs purple (Docs keep their own violet, a fixed hue, not the company accent). Light: the
+     words on the surface 5.36:1, the white label on the fill 5.36:1, the fill's edge on the surface 5.36:1. */
+  --theme-docs-accent: #6b4cf0;
+  --theme-docs-accent-text: #ffffff;
   --theme-info: #4167cf;
   --theme-success: #328267;
   /* EST-1202: a shade deeper (was #9a6209), so warning words read at 4.5:1 or more on their own tinted chips (4.87:1)
@@ -40,6 +44,12 @@
   --theme-action-hover: #bdb3ff;
   --theme-action-text: #17123a;
   --theme-focus: #b8adff;
+  /* The same docs purple lightened along its own hue (color-mix(in oklab, #6b4cf0 80%, white): white has no hue, so the
+     oklab hue stays -75.6°) to the first 5% step that passes WCAG AA on the dark surface #1a1a24: words 4.84:1 (≥ 4.5),
+     the fill's edge 4.84:1 (≥ 3). The steps before fail as words: 100% #6b4cf0 3.22, 95% 3.57, 90% 3.95, 85% 4.37.
+     White on this fill is 3.57:1, so its label is the dark ink (4.97:1), as on every dark action fill. */
+  --theme-docs-accent: #8376f6;
+  --theme-docs-accent-text: #17123a;
   --theme-info: #8da5ff;
   --theme-success: #79c3a5;
   --theme-warning: #e2b667;
