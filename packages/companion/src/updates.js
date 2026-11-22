@@ -1,6 +1,6 @@
 // One policy for the installed apps. Discovery never sends account or attendance data.
 export const UPDATE_INTERVAL = 4 * 60 * 60 * 1000;
-export const UPDATE_URL = 'https://pulse.estateautopilots.com/api/app-updates';
+export const UPDATE_URL = 'https://app.vitalsos.ai/api/app-updates'; // DOMAIN (22 Nov 2026): the brand's address; the old one still answers
 export function channel(value = 'test') {
   if (!['test', 'stable'].includes(value)) throw Error('Unknown update channel');
   return value;
