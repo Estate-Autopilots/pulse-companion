@@ -3,17 +3,20 @@
 // badge current, shows reminders with a button, and finishes browser pairing even after the popup closes.
 import { actionRequest, badge, clockOffset, createClient, demoClient, dueReminders, prefsWith, verifyUrl } from './shared/index.js';
 import {createFeed,conversationTarget} from './shared/communications.js';
-import {UPDATE_URL,parseManifest,newer} from './shared/updates.js';
-import { companionBase, companionStore } from './companion-store.js';
+import {parseManifest,newer} from './shared/updates.js';
+import { DEFAULT_BASE, companionBase, companionStore } from './companion-store.js';
 
 const ALARM = 'pulse-companion';
 const CHAT_ALARM = 'pulse-companion-chats';
 const UPDATE_ALARM = 'pulse-companion-updates';
 let checkingUpdates = false;
+// QUOTE-LINKS 3 moved the shared UPDATE_URL to the brand's address. This extension holds host permission for the old one,
+// which still answers app updates, so it asks there (a fetch to another host would be refused: that route sends no CORS).
+const UPDATES = `${new URL(DEFAULT_BASE).origin}/api/app-updates`;
 async function checkUpdates() {
   if (checkingUpdates) return; checkingUpdates = true;
   try {
-    const response = await fetch(`${UPDATE_URL}/test/latest.json`, { headers: {Accept:'application/json'}, credentials:'omit', signal:AbortSignal.timeout(30000) });
+    const response = await fetch(`${UPDATES}/test/latest.json`, { headers: {Accept:'application/json'}, credentials:'omit', signal:AbortSignal.timeout(30000) });
     if (response.status === 204) { await chrome.storage.local.remove('companionUpdate'); return; }
     if (!response.ok) throw Error('Update check failed');
     const manifest = parseManifest(await response.json());
